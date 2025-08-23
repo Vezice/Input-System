@@ -1,0 +1,55 @@
+# Script to "clasp push" all:
+Get-ChildItem -Path . -Filter ".clasp.json" -Recurse | ForEach-Object {
+    Push-Location $_.DirectoryName; 
+    Write-Host "--> Pushing project in $($_.DirectoryName)";
+    clasp push; 
+    Pop-Location
+}
+
+# Script to "clasp pull" all:
+Get-ChildItem -Path . -Filter ".clasp.json" -Recurse | ForEach-Object {
+    Push-Location $_.DirectoryName;
+    Write-Host "--> Pulling project in $($_.DirectoryName)";
+    clasp pull;
+    Pop-Location
+}
+
+# Script to "clasp deploy" all:
+Get-ChildItem -Path . -Filter "deployment.json" -Recurse | ForEach-Object {
+    Push-Location $_.DirectoryName
+    
+    $deployConfig = Get-Content -Raw -Path "deployment.json" | ConvertFrom-Json
+    $deploymentId = $deployConfig.deploymentId
+
+    if ($deploymentId) {
+        Write-Host "--> Deploying project in $($_.DirectoryName) to ID: $deploymentId"
+        clasp deploy --deploymentId $deploymentId --description "Automated batch deployment on $(Get-Date)"
+    } else {
+        Write-Host "--> WARNING: No deploymentId found in deployment.json for $($_.DirectoryName). Skipping deployment."
+    }
+    
+    Pop-Location
+}
+
+# Script to Push and Deploy all:
+# Find all clasp projects, PUSH the latest code, and then DEPLOY
+Get-ChildItem -Path . -Filter "deployment.json" -Recurse | ForEach-Object {
+    Push-Location $_.DirectoryName
+    
+    # Step 1: Push the latest local code to the server
+    Write-Host "--> Pushing latest code for project in $($_.DirectoryName)"
+    clasp push
+    
+    # Step 2: Deploy the code that is now on the server
+    $deployConfig = Get-Content -Raw -Path "deployment.json" | ConvertFrom-Json
+    $deploymentId = $deployConfig.deploymentId
+
+    if ($deploymentId) {
+        Write-Host "--> Deploying project to ID: $deploymentId"
+        clasp deploy --deploymentId $deploymentId --description "Automated batch deployment on $(Get-Date)"
+    } else {
+        Write-Host "--> WARNING: No deploymentId found in deployment.json. Skipping deployment."
+    }
+    
+    Pop-Location
+}
