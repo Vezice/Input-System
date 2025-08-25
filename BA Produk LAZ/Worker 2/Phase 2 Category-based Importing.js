@@ -5,6 +5,7 @@
 // VSCode Tested
 // Added non-brand data category
 // Synchronized
+// Mac Sync
 
 /**
  * Assigns an available temporary sheet (e.g., "Temp A") to a specific category by renaming it.
