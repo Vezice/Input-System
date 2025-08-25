@@ -413,9 +413,7 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
             }
 
             // Rule: Turn every number that was imported to always remove anything behind the dot.
-            // Check if the value is a number or a string that can be converted to one.
             if (value !== null && value !== '' && !isNaN(value)) {
-                // Use parseInt to get only the integer part, which effectively truncates any decimals.
                 value = parseInt(value, 10);
             }
             
@@ -424,17 +422,22 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
         
         if (processedRow.length > 0) {
             const targetRow = targetSheet.getLastRow() + 1;
-            const range = targetSheet.getRange(targetRow, 2, 1, processedRow.length);
             
             // Set the brand code in the first column
             targetSheet.getRange(targetRow, 1).setValue(folderName);
             
-            // Set the processed data
-            range.setValues([processedRow]);
+            // Set the processed data starting from the second column
+            targetSheet.getRange(targetRow, 2, 1, processedRow.length).setValues([processedRow]);
             
-            // Rule: Make sure the format is a proper number format.
-            // This applies the "12,345" style formatting to the cells.
-            range.setNumberFormat("#,##0");
+            // --- MODIFICATION ---
+            // Apply the number format ONLY to the cells that contain numbers,
+            // starting from the THIRD column (Column C) onwards.
+            // This leaves the date in Column B untouched.
+            if (processedRow.length > 1) { // Ensure there are number columns to format
+                const numberRange = targetSheet.getRange(targetRow, 3, 1, processedRow.length - 1);
+                numberRange.setNumberFormat("#,##0");
+            }
+            // --- END MODIFICATION ---
             
             return true;
         }

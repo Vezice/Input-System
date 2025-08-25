@@ -294,6 +294,7 @@ function AHA_ValidateData2(category, data, file) {
 /**
  * --- CORE BATCH PROCESSING ---
  * Processes a batch of files: identifies category, validates, moves, and logs results.
+ * -- MODIFIED with a general retry loop for all processing errors. --
  */
 function AHA_ValidationBatch2() {
     const start = new Date();
@@ -333,39 +334,39 @@ function AHA_ValidationBatch2() {
             let parentFolderName = "Move";
             let processingStatus = "Not Yet Added";
 
-            try {
-                let guessedCategory = "Unknown";
-                const lowerName = name.toLowerCase();
+            // --- NEW: General retry loop for the entire process ---
+            const maxRetries = 3;
+            const retryDelay = 10000; // 10 seconds
 
-                if (lowerName.includes('.shopee-shop-stats.')) {
-                    guessedCategory = "BA Dash SHO";
-                } else if (lowerName.includes('bisnis analisis - dashboard')) {
-                    if (lowerName.startsWith('tik ')) {
-                        guessedCategory = "BA Dash TIK";
-                    } else if (lowerName.startsWith('tok ')) {
-                        guessedCategory = "BA Dash TOK";
-                    } else {
-                        guessedCategory = "BA Dash LAZ";
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    let guessedCategory = "Unknown";
+                    const lowerName = name.toLowerCase();
+
+                    if (lowerName.includes('.shopee-shop-stats.')) {
+                        guessedCategory = "BA Dash SHO";
+                    } else if (lowerName.includes('bisnis analisis - dashboard')) {
+                        if (lowerName.startsWith('tik ')) { guessedCategory = "BA Dash TIK"; }
+                        else if (lowerName.startsWith('tok ')) { guessedCategory = "BA Dash TOK"; }
+                        else { guessedCategory = "BA Dash LAZ"; }
                     }
-                }
-                
-                if (guessedCategory !== "Unknown") {
-                    [validationResult, parentFolderName] = AHA_ValidateData2(guessedCategory, null, file);
-                    category = guessedCategory;
-                }
-                
-                if (validationResult === "Not Checked") {
-                    const blob = file.getBlob();
-                    const resource = { title: name, mimeType: MimeType.GOOGLE_SHEETS, parents: [{ id: moveFolderId }] };
-                    const newFile = Drive.Files.insert(resource, blob, { convert: true, supportsAllDrives: true });
-                    const newFileId = newFile.id;
-                    try {
-                        const newFileMeta = DriveApp.getFileById(newFileId);
-                        if (newFileMeta.getMimeType() === MimeType.GOOGLE_SHEETS) {
+                    
+                    if (guessedCategory !== "Unknown") {
+                        [validationResult, parentFolderName] = AHA_ValidateData2(guessedCategory, null, file);
+                        category = guessedCategory;
+                    }
+                    
+                    if (validationResult === "Not Checked") {
+                        // ... (The file conversion and category detection logic remains the same)
+                        // Note: The specific retry for Drive.Files.insert is now handled by this general loop.
+                        const blob = file.getBlob();
+                        const resource = { title: name, mimeType: MimeType.GOOGLE_SHEETS, parents: [{ id: moveFolderId }] };
+                        const newFile = Drive.Files.insert(resource, blob, { convert: true, supportsAllDrives: true });
+                        const newFileId = newFile.id;
+                        try {
                             const tempSheet = SpreadsheetApp.openById(newFileId).getSheets()[0];
                             const initialData = tempSheet.getRange(1, 1, Math.min(tempSheet.getLastRow(), 15), tempSheet.getLastColumn()).getValues();
                             let detectedCategoryInfo = { category: "Unknown", headerRowIndex: 1, dataRowIndex: 2 };
-
                             for (const rowIndexToCheck of potentialHeaderRowsToCheck) {
                                 if (initialData[rowIndexToCheck] && Array.isArray(initialData[rowIndexToCheck])) {
                                     const result = AHA_GetCategory2(initialData[rowIndexToCheck], name);
@@ -378,27 +379,33 @@ function AHA_ValidationBatch2() {
                             category = detectedCategoryInfo.category;
                             const fullData = tempSheet.getDataRange().getValues();
                             [validationResult, parentFolderName] = AHA_ValidateData2(category, fullData, file, detectedCategoryInfo);
+                        } finally {
+                            if (newFileId) Drive.Files.remove(newFileId, { supportsAllDrives: true });
                         }
-                    } finally {
-                        Drive.Files.remove(newFileId, { supportsAllDrives: true });
+                    }
+                    
+                    if (validationResult === "Wrong Data" || validationResult === "Move Error" || validationResult === "Not Valid") {
+                        processingStatus = "Completed";
+                    }
+
+                    // If we reach this point without an error, the process is successful.
+                    break; // Exit the retry loop.
+
+                } catch (error) {
+                    Logger.log(`Error processing file ${name} on attempt ${attempt + 1}/${maxRetries}: ${error.toString()}`);
+                    
+                    if (attempt < maxRetries - 1) {
+                        // If it's not the last attempt, wait before retrying.
+                        Utilities.sleep(retryDelay);
+                    } else {
+                        // This was the last attempt, so mark as permanently failed.
+                        AHA_SlackNotify3(`${CONFIG.SLACK.MENTION_USER} ❌ Error processing file ${name} after ${maxRetries} attempts: ${error.toString()}`);
+                        processingStatus = "Failed"; 
+                        validationResult = "Process Error";
+                        parentFolderName = AHA_MoveFile2(file, "Failed", category, null);
                     }
                 }
-                
-                // --- NEW LOGIC TO PREVENT LOOP ---
-                // If validation finished but the data was wrong, mark the process as complete for this file.
-                if (validationResult === "Wrong Data" || validationResult === "Move Error" || validationResult === "Not Valid") {
-                    processingStatus = "Completed"; // This breaks the loop for the next run.
-                }
-                // --- END NEW LOGIC ---
-
-            } catch (error) {
-                Logger.log(`Error processing file ${name}: ${error.toString()}`);
-                AHA_SlackNotify3(`${CONFIG.SLACK.MENTION_USER} ❌ Error processing file ${name}: ${error.toString()}`);
-                
-                processingStatus = "Failed"; 
-                validationResult = "Process Error";
-                parentFolderName = AHA_MoveFile2(file, "Failed", category, null);
-            }
+            } // --- End of retry loop ---
 
             const lower = name.toLowerCase();
             if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
