@@ -513,10 +513,7 @@ function AHA_MoveFile2(file, targetFolderIdentifier, category = null, sheetData 
 
         let actualTargetFolderName = "Failed";
 
-        // --- NEW: Special instruction to get folder name from filename ---
         if (targetFolderIdentifier === "DERIVE_FROM_FILENAME") {
-
-            // --- MODIFICATION: Added special handling for BA Dash SHO ---
             if (category === "BA Dash SHO") {
                 const shopName = file.getName().split(".shopee-shop-stats.")[0].trim();
                 if (shopName) {
@@ -524,22 +521,17 @@ function AHA_MoveFile2(file, targetFolderIdentifier, category = null, sheetData 
                     if (!validationSheet) {
                         throw new Error("Validation Sheet 'BA Dash SHO Validation' not found. It is required for this category.");
                     }
-                    // Get columns B (Folder Name / Brand Code) and C (Shop Name)
                     const mappingData = validationSheet.getRange("B1:C" + validationSheet.getLastRow()).getValues();
-                    
-                    // Loop through the mapping to find the shop name
                     for (const row of mappingData) {
-                        const folderName = row[0]; // Value from Column B
-                        const validationValue = row[1]; // Value from Column C
-                        
+                        const folderName = row[0];
+                        const validationValue = row[1];
                         if (validationValue && validationValue.toString().trim() === shopName) {
                             actualTargetFolderName = folderName.toString();
-                            break; // Found it, stop looking.
+                            break;
                         }
                     }
                 }
             } else {
-                // This is the existing logic for other BA Dash files (TIK, TOK, LAZ)
                 let valueToCheck = null;
                 switch (category) {
                     case "BA Dash TIK":
@@ -554,17 +546,13 @@ function AHA_MoveFile2(file, targetFolderIdentifier, category = null, sheetData 
                     actualTargetFolderName = valueToCheck;
                 }
             }
-        // --- END MODIFICATION ---
-
         } else if (targetFolderIdentifier === "Failed" || targetFolderIdentifier === "Validated") {
             actualTargetFolderName = targetFolderIdentifier;
         } else {
-            // This is the original logic for cell-content validation, which still needs a sheet.
             const validationSheet = ss.getSheetByName(targetFolderIdentifier);
             if (!validationSheet) {
                 throw new Error(`Validation Sheet '${targetFolderIdentifier}' not found.`);
             }
-
             if (!sheetData) {
                 throw new Error(`Missing sheetData for cell-based validation of category '${category}'.`);
             }
@@ -586,7 +574,6 @@ function AHA_MoveFile2(file, targetFolderIdentifier, category = null, sheetData 
                 const startRowIndex = dataRowNumber - 1;
                 const NUM_ROWS_TO_CHECK = 20;
                 const MATCH_THRESHOLD_PERCENT = 0.50;
-
                 const endRowIndex = Math.min(startRowIndex + NUM_ROWS_TO_CHECK, sheetData.length);
                 const valuesToCheck = sheetData
                     .slice(startRowIndex, endRowIndex)
@@ -598,7 +585,6 @@ function AHA_MoveFile2(file, targetFolderIdentifier, category = null, sheetData 
                     const validationMap = new Map(
                         mapping.map(row => [row[1]?.toString().trim(), row[0]?.toString().trim()]).filter(([id, folder]) => id && folder)
                     );
-
                     let matchCount = 0;
                     const folderNameCounts = {};
                     for (const value of valuesToCheck) {
@@ -609,12 +595,9 @@ function AHA_MoveFile2(file, targetFolderIdentifier, category = null, sheetData 
                             folderNameCounts[folderName] = (folderNameCounts[folderName] || 0) + 1;
                         }
                     }
-
                     const requiredMatches = valuesToCheck.length * MATCH_THRESHOLD_PERCENT;
                     if (matchCount >= requiredMatches && matchCount > 0) {
                         actualTargetFolderName = Object.keys(folderNameCounts).reduce((a, b) => folderNameCounts[a] > folderNameCounts[b] ? a : b);
-                    } else {
-                        AHA_SlackNotify3(`⚠️ Validation failed for category "${category}". Found ${matchCount}/${valuesToCheck.length} matches. Moving to 'Failed'.`);
                     }
                 }
             }
@@ -630,7 +613,9 @@ function AHA_MoveFile2(file, targetFolderIdentifier, category = null, sheetData 
 
     } catch (err) {
         Logger.log(`Move error for file ${file.getName()}: ${err.toString()}`);
-        return "Move Error";
+        // --- MODIFICATION: Re-throw the error to trigger the retry loop ---
+        // This will allow the general retry mechanism in AHA_ValidationBatch2 to catch it.
+        throw err;
     }
 }
 

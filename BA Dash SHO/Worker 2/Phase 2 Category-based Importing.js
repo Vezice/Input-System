@@ -456,6 +456,71 @@ function AHA_ProcessBADashTOKFile(data, targetSheet, logSheet, folderName, dataR
   return AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex);
 }
 
+/**
+ * Special function for Demografis BSL. It filters rows ending with "MON-M" in the
+ * second column and moves them to a separate sheet.
+ */
+function AHA_ProcessDemografisBSLFile(data, targetSheet, logSheet, folderName, dataRowIndex) {
+    try {
+        const startDataRow = dataRowIndex - 1;
+        if (startDataRow >= data.length) {
+            return false; // No data to process.
+        }
+
+        const content = data.slice(startDataRow).filter(row => row.some(cell => cell !== "" && cell != null));
+        if (content.length === 0) {
+            return false; // No content rows found.
+        }
+
+        // --- NEW: Filtering and Routing Logic ---
+        const defaultRows = [];
+        const monRows = [];
+        const MON_M_SUFFIX = "MON-M";
+
+        // Separate the rows into two lists based on the condition.
+        for (const row of content) {
+            const columnBValue = row[1]; // Get the value from the second column.
+            if (typeof columnBValue === 'string' && columnBValue.endsWith(MON_M_SUFFIX)) {
+                monRows.push(row);
+            } else {
+                defaultRows.push(row);
+            }
+        }
+
+        let importOccurred = false;
+
+        // Write the default rows to the standard sheet.
+        if (defaultRows.length > 0) {
+            const targetRow = targetSheet.getLastRow() + 1;
+            targetSheet.getRange(targetRow, 1, defaultRows.length, defaultRows[0].length).setValues(defaultRows);
+            importOccurred = true;
+        }
+
+        // Write the "MON-M" rows to the special sheet.
+        if (monRows.length > 0) {
+            const ss = SpreadsheetApp.getActiveSpreadsheet();
+            const monSheetName = 'Temp Demografis BSL MON-M';
+            const monSheet = AHA_GetOrCreateSheet2(monSheetName);
+
+            // If the special sheet is new, copy the headers from the main sheet.
+            if (monSheet.getLastRow() === 0 && targetSheet.getLastRow() > 0) {
+                const headerRange = targetSheet.getRange(1, 1, 1, targetSheet.getLastColumn());
+                headerRange.copyTo(monSheet.getRange(1, 1));
+            }
+
+            const targetRow = monSheet.getLastRow() + 1;
+            monSheet.getRange(targetRow, 1, monRows.length, monRows[0].length).setValues(monRows);
+            importOccurred = true;
+        }
+        
+        return importOccurred;
+
+    } catch (err) {
+        Logger.log(`Error in AHA_ProcessDemografisBSLFile: ${err.message}`);
+        return false;
+    }
+}
+
 // === DISPATCH MAP: Routes categories to the correct processing function ===
 const importDispatch = {
   "BA Produk SHO": AHA_ProcessBAProdukSHOFile,
@@ -471,7 +536,7 @@ const importDispatch = {
   "Informasi Dikirim Dalam SHO": AHA_ProcessGenericFile,
   "Export SKU LAZ": AHA_ProcessGenericFile,
   "Export SKU TIK": AHA_ProcessGenericFile,
-  "Demografis BSL": AHA_ProcessGenericFileNoBrand // Uses the new no-brand-code function.
+  "Demografis BSL": AHA_ProcessDemografisBSLFile
 };
 
 // === HELPER FUNCTIONS ===
