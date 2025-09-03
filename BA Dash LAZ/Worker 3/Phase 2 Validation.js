@@ -221,73 +221,52 @@ function AHA_GetCategory2(potentialHeaderRow, fileName) {
  * --- VALIDATION DISPATCHER ---
  * Routes a file to the correct validation logic based on its category.
  */
-function AHA_ValidateData2(category, data, file) {
-    const start = new Date();
+function AHA_ValidateData2(category, data, file, detectedCategoryInfo = null) {
     try {
-        let validationStatus = "Unknown Format";
-        let moveResultFolder = "Failed";
-
-        try {
-            // --- NEW LOGIC: Handle all BA Dash files with a special path ---
-            if (category.includes("BA Dash")) {
-                // For these files, the folder name is derived directly from the filename.
-                // We tell AHA_MoveFile2 to extract the name instead of looking for a sheet.
-                const folderName = AHA_MoveFile2(file, "DERIVE_FROM_FILENAME", category, data);
-                
-                if (folderName === "Move Error" || folderName === "Failed") {
-                    return ["Wrong Data", "Failed"];
-                } else {
-                    return ["Validated", folderName];
-                }
-            }
-            // --- END NEW LOGIC ---
-
-            const autoValidatedCategories = ["Demografis BSL"];
-            if (autoValidatedCategories.includes(category)) {
-                Logger.log(`✅ Auto-validating category '${category}'. No brand check needed.`);
-                validationStatus = "Validated";
-                moveResultFolder = AHA_MoveFile2(file, "Validated", category, data);
-                return [validationStatus, moveResultFolder];
-            }
-
-            // --- RULE DEFINITIONS (BA Dash rules are no longer needed here) ---
-            const validationRules = {}; // Start with an empty object
-            const cellValidationCategories = [
-                "BA Produk LAZ", "BA Produk TIK", "BA Produk SHO",
-                "Informasi Dasar SHO", "Informasi Penjualan SHO", "Informasi Media SHO",
-                "Informasi Dikirim Dalam SHO", "Export SKU LAZ", "Export SKU TIK"
-            ];
-            cellValidationCategories.forEach(cat => {
-                validationRules[cat] = { validationSheet: `${cat} Validation` };
-            });
-
-            const rule = validationRules[category];
-            if (rule) {
-                const result = AHA_MoveFile2(file, rule.validationSheet, category, data);
-                if (result === "Move Error" || result === "Failed") {
-                    validationStatus = (result === "Move Error") ? "Move Error" : "Wrong Data";
-                    moveResultFolder = "Failed";
-                } else {
-                    validationStatus = "Validated";
-                    moveResultFolder = result;
-                }
+        // --- Handle all BA Dash files with a special path ---
+        if (category.includes("BA Dash")) {
+            const folderName = AHA_MoveFile2(file, "DERIVE_FROM_FILENAME", category, data);
+            if (folderName === "Move Error" || folderName === "Failed") {
+                return ["Wrong Data", "Failed"];
             } else {
-                const result = AHA_MoveFile2(file, "Failed", category, data);
-                validationStatus = (category === "Unknown") ? "Not Valid" : "Unknown Format";
-                moveResultFolder = result;
+                return ["Validated", folderName];
             }
-
-            return [validationStatus, moveResultFolder];
-
-        } catch (err) {
-            Logger.log(`Validation failed: ${err}`);
-            AHA_SlackNotify3(`⚠️ Validation failed: ${err} ${CONFIG.SLACK.MENTION_USER}`);
-            const moveResult = AHA_MoveFile2(file, "Failed", category, data);
-            return ["Validation Error", moveResult];
         }
-    } finally {
-        const end = new Date();
-        // AHA_LogRuntime3(end - start);
+
+        // --- Handle auto-validated categories ---
+        const autoValidatedCategories = ["Demografis BSL"];
+        if (autoValidatedCategories.includes(category)) {
+            const moveResultFolder = AHA_MoveFile2(file, "Validated", category, data);
+            return ["Validated", moveResultFolder];
+        }
+
+        // --- Handle cell-content validation categories ---
+        const validationRules = {};
+        const cellValidationCategories = [
+            "BA Produk LAZ", "BA Produk TIK", "BA Produk SHO",
+            "Informasi Dasar SHO", "Informasi Penjualan SHO", "Informasi Media SHO",
+            "Informasi Dikirim Dalam SHO", "Export SKU LAZ", "Export SKU TIK"
+        ];
+        cellValidationCategories.forEach(cat => {
+            validationRules[cat] = { validationSheet: `${cat} Validation` };
+        });
+
+        const rule = validationRules[category];
+        if (rule) {
+            const result = AHA_MoveFile2(file, rule.validationSheet, category, data, detectedCategoryInfo);
+            if (result === "Move Error" || result === "Failed") {
+                return ["Wrong Data", "Failed"];
+            } else {
+                return ["Validated", result];
+            }
+        } else {
+            const result = AHA_MoveFile2(file, "Failed", category, data);
+            return ["Unknown Format", result];
+        }
+    } catch (err) {
+        AHA_LogAndNotify(`Validation failed for ${file.getName()}: ${err.message}`, true);
+        // --- MODIFICATION: Re-throw the error to trigger the main retry loop ---
+        throw err;
     }
 }
 
