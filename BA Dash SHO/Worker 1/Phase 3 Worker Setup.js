@@ -92,24 +92,30 @@ function AHA_SetWorkerConfiguration3() {
 
 // === Web App entry point ===
 function doPost(e) {
-  const secretToken = 'CuanCengliCincai'; // match this in central sheet
-  const data = JSON.parse(e.postData.contents);
+  const secretToken = 'CuanCengliCincai';
+  const data = JSON.parse(e.postData.contents || '{}');
 
   if (data.token !== secretToken) {
-    return ContentService.createTextOutput("Unauthorized").setMimeType(ContentService.MimeType.TEXT);
+    return ContentService.createTextOutput("Unauthorized")
+      .setMimeType(ContentService.MimeType.TEXT);
   }
 
   if (data.command === 'StartWorker') {
-    try {
-      AHA_StartWorking3();
-      return ContentService.createTextOutput("Worker started successfully").setMimeType(ContentService.MimeType.TEXT);
-    } catch (err) {
-      return ContentService.createTextOutput("Error: " + err.message).setMimeType(ContentService.MimeType.TEXT);
-    }
+    // Schedule the worker to run shortly (time-driven trigger)
+    // NOTE: Smallest practical delay is ~1 minute.
+    ScriptApp.newTrigger('AHA_StartWorking3')
+      .timeBased()
+      .after(60 * 1000) // ~1 minute
+      .create();
+
+    return ContentService.createTextOutput("Worker scheduled")
+      .setMimeType(ContentService.MimeType.TEXT);
   }
 
-  return ContentService.createTextOutput("Invalid command").setMimeType(ContentService.MimeType.TEXT);
+  return ContentService.createTextOutput("Invalid command")
+    .setMimeType(ContentService.MimeType.TEXT);
 }
+
 
 function AHA_StartWorking3() {
   AHA_SetWorkerConfiguration3();
