@@ -12,7 +12,8 @@ const CONFIG = {
   SHEET_NAMES: { // Standardizes sheet names used throughout the script.
     INPUT: "Input",
     LOGS: "Logs",
-    TYPE_VALIDATION: "Type Validation"
+    TYPE_VALIDATION: "Type Validation",
+    CATEGORY_VALIDATION: PropertiesService.getScriptProperties().getProperty("WORKER_CATEGORY")+" Validation"
   },
   FOLDER_IDS: { // Stores important Google Drive folder IDs.
     ROOT_SHARED_DRIVE: "0AJyZWtXd1795Uk9PVA", // The main shared drive where destination folders are located.
@@ -89,11 +90,11 @@ function AHA_CekBrandValidation2() {
   const start = new Date();
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const inputSheet = ss.getSheetByName(CONFIG.SHEET_NAMES.INPUT);
-    const statusCell = inputSheet.getRange("E1"); // The specific cell that acts as an error flag.
+    const inputSheet = ss.getSheetByName(CONFIG.SHEET_NAMES.CATEGORY_VALIDATION);
+    const statusCell = inputSheet.getRange("A3"); // The specific cell that acts as an error flag.
 
     // Return true if the cell's value indicates an error.
-    return statusCell.getValue() === "Brand Validation Error!!";
+    return statusCell.getValue() !== "";
 
   } finally {
     const end = new Date();
