@@ -94,7 +94,7 @@ function AHA_CekBrandValidation2() {
     const statusCell = inputSheet.getRange("A3"); // The specific cell that acts as an error flag.
 
     // Return true if the cell's value indicates an error.
-    return statusCell.getValue() !== "";
+    return statusCell.getValue() === "";
 
   } finally {
     const end = new Date();
