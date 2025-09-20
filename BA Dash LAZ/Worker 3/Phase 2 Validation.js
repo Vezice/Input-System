@@ -479,6 +479,7 @@ function AHA_RunValBatchSafely2() {
   }
 }
 
+
 /**
  * --- FILE MOVER & VALIDATOR ---
  * Performs the actual validation and moves the file to the appropriate folder.
@@ -522,9 +523,22 @@ function AHA_MoveFile2(file, targetFolderIdentifier, category = null, sheetData 
                         valueToCheck = file.getName().split(' ')[0] || null;
                         break;
                 }
-                if (valueToCheck) {
+
+                // --- NEW VALIDATION LOGIC FOR BA DASH TIK, TOK, and LAZ ---
+                if (["BA Dash TIK", "BA Dash TOK", "BA Dash LAZ"].includes(category)) {
+                    if (valueToCheck && AHA_ValidateBrandCodeFromSheet(valueToCheck, category)) {
+                        // Brand code is valid, proceed as normal.
+                        actualTargetFolderName = valueToCheck;
+                    } else {
+                        // Brand code is NOT valid, trigger failure.
+                        AHA_SlackNotify3(`❌ *Invalid Filename*: Brand code '${valueToCheck || "NULL"}' in file '${file.getName()}' is not valid for category '${category}'. Moving to Failed. ${CONFIG.SLACK.MENTION_USER}`);
+                        actualTargetFolderName = "Failed";
+                    }
+                } else if (valueToCheck) {
+                    // Fallback for any other categories that might use this logic.
                     actualTargetFolderName = valueToCheck;
                 }
+                // --- END OF NEW LOGIC ---
             }
         } else if (targetFolderIdentifier === "Failed" || targetFolderIdentifier === "Validated") {
             actualTargetFolderName = targetFolderIdentifier;
@@ -586,20 +600,16 @@ function AHA_MoveFile2(file, targetFolderIdentifier, category = null, sheetData 
         const folders = parentFolder.getFoldersByName(actualTargetFolderName);
         const targetFolder = folders.hasNext() ? folders.next() : parentFolder.createFolder(actualTargetFolderName);
         
-        // Wrap the Drive API calls in a retry block
-        AHA_ExecuteWithRetry(() => {
-          // These two operations should happen together.
-          Drive.Files.update({ parents: [{ id: targetFolder.getId() }] }, file.getId(), null, { supportsAllDrives: true });
-          DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty("MOVE_FOLDER_ID")).removeFile(file);
-        }, `Move File: ${file.getName()}`, 3, 2000);
-
+        Drive.Files.update({ parents: [{ id: targetFolder.getId() }] }, file.getId(), null, { supportsAllDrives: true });
+        DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty("MOVE_FOLDER_ID")).removeFile(file);
 
         return actualTargetFolderName;
 
     } catch (err) {
-        // This catch block now catches the final error after all retries have failed.
-        Logger.log(`Move error for file ${file.getName()} after retries: ${err.toString()}`);
-        throw err; // Re-throw so the main validation loop can mark the file as failed.
+        Logger.log(`Move error for file ${file.getName()}: ${err.toString()}`);
+        // --- MODIFICATION: Re-throw the error to trigger the retry loop ---
+        // This will allow the general retry mechanism in AHA_ValidationBatch2 to catch it.
+        throw err;
     }
 }
 
@@ -665,7 +675,41 @@ function AHA_RemoveValTriggers2(functionName) {
 }
 
 
+/**
+ * Checks if a given brand code exists in Column B of the category's validation sheet.
+ * @param {string} brandCode The brand code extracted from the filename.
+ * @param {string} category The category being validated (e.g., "BA Dash TIK").
+ * @returns {boolean} True if the brand code is valid, false otherwise.
+ */
+function AHA_ValidateBrandCodeFromSheet(brandCode, category) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const validationSheetName = `${category} Validation`;
+    const sheet = ss.getSheetByName(validationSheetName);
 
+    if (!sheet) {
+      AHA_SlackNotify3(`⚠️ *Missing Sheet*: Validation sheet named '${validationSheetName}' not found. Cannot validate brand code '${brandCode}'.`);
+      Logger.log(`Validation sheet not found: ${validationSheetName}`);
+      return false; // Fail safely if the sheet doesn't exist.
+    }
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) {
+      return false; // No data to validate against.
+    }
+
+    // Get all brand codes from Column B and create a Set for fast lookup.
+    const validBrandCodes = sheet.getRange(`B2:B${lastRow}`).getValues().flat().filter(String);
+    const validBrandCodeSet = new Set(validBrandCodes);
+
+    return validBrandCodeSet.has(brandCode);
+
+  } catch (err) {
+    Logger.log(`Error in AHA_ValidateBrandCodeFromSheet for brand '${brandCode}': ${err.message}`);
+    AHA_SlackNotify3(`❌ *Error*: An error occurred during brand code validation for '${brandCode}'. ${CONFIG.SLACK.MENTION_USER}`);
+    return false;
+  }
+}
 
 
 
