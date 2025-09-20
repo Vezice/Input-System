@@ -189,3 +189,33 @@ function AHA_NotifyCentral3() {
   }
 }
 
+/**
+ * --- GENERIC RETRY HELPER ---
+ * Executes a function and retries it on failure with an exponential backoff delay.
+ * @param {Function} func The function to execute.
+ * @param {string} operationName A descriptive name for the operation for logging.
+ * @param {number} maxRetries The maximum number of times to retry.
+ * @param {number} initialDelayMs The starting delay in milliseconds.
+ * @returns The return value of the successful function execution.
+ * @throws {Error} Throws the last error if all retries fail.
+ */
+function AHA_ExecuteWithRetry(func, operationName = 'Unnamed Operation', maxRetries = 3, initialDelayMs = 2000) {
+  let attempt = 0;
+  let delay = initialDelayMs;
+  while (attempt < maxRetries) {
+    try {
+      return func(); // Attempt to execute the function
+    } catch (err) {
+      attempt++;
+      Logger.log(`⚠️ Attempt ${attempt}/${maxRetries} failed for '${operationName}': ${err.message}`);
+      if (attempt >= maxRetries) {
+        AHA_SlackNotify3(`❌ *FATAL ERROR*: Operation '${operationName}' failed after ${maxRetries} attempts. Last error: ${err.message}`);
+        throw new Error(`Operation '${operationName}' failed after ${maxRetries} attempts. Last error: ${err.message}`);
+      }
+      // Use exponential backoff with jitter
+      const jitter = Math.random() * 1000;
+      Utilities.sleep(delay + jitter);
+      delay *= 2; // Double the delay for the next attempt
+    }
+  }
+}
