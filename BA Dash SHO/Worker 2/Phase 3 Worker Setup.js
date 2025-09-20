@@ -137,37 +137,33 @@ function AHA_CheckURL(){
 // This function sends a notification to the central sheet.
 function AHA_NotifyCentral3() {
   const start = new Date();
-  const properties = PropertiesService.getScriptProperties();
-  const category = properties.getProperty("WORKER_CATEGORY");
-  const worker = properties.getProperty("WORKER_COUNT");
-  const url = properties.getProperty("CENTRAL_WEB_APP_URL");
+  try {
+    const properties = PropertiesService.getScriptProperties();
+    const category = properties.getProperty("WORKER_CATEGORY");
+    const worker = properties.getProperty("WORKER_COUNT");
+    const url = properties.getProperty("CENTRAL_WEB_APP_URL");
 
-  if (!category || !worker || !url) {
-    const errorMsg = "FATAL ERROR: Missing configuration properties (Category, Role, or Central URL). Please run AHA_SetWorkerConfiguration3.";
-    Logger.log(errorMsg);
-    AHA_SlackNotify3(`❌ *FATAL ERROR*: ${errorMsg}`);
-    throw new Error(errorMsg);
-  }
-  
-  const MAX_RETRIES = 5;
-  const RETRY_DELAY_MS = 5000; // 5 seconds
+    if (!category || !worker || !url) {
+      const errorMsg = "FATAL ERROR: Missing configuration properties (Category, Role, or Central URL). Please run AHA_SetWorkerConfiguration3.";
+      Logger.log(errorMsg);
+      // We can't use our Slack notifier if its own config might be missing, so this is a hard throw.
+      throw new Error(errorMsg);
+    }
 
-  const payload = {
-    category: category,
-    worker: worker
-  };
+    const payload = JSON.stringify({
+      category: category,
+      worker: worker
+    });
 
-  const options = {
-    method: 'post',
-    // contentType: 'application/x-www-form-urlencoded',
-    // payload: `category=${encodeURIComponent(category)}&worker=${encodeURIComponent(worker)}`,
-    contentType: 'application/json',
-    payload: JSON.stringify(payload),
-    muteHttpExceptions: true
-  };
+    const options = {
+      method: 'post',
+      contentType: 'application/json',
+      payload: payload,
+      muteHttpExceptions: true // Keep true to inspect response codes
+    };
 
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
+    // Use the retry helper
+    AHA_ExecuteWithRetry(() => {
       const response = UrlFetchApp.fetch(url, options);
       const responseText = response.getContentText();
       const responseCode = response.getResponseCode();
@@ -175,44 +171,21 @@ function AHA_NotifyCentral3() {
       if (responseCode === 200 && responseText === 'OK') {
         Logger.log(`✅ Central sheet notified successfully. Category: ${category}, Worker: ${worker}`);
         AHA_SlackNotify3(`✅ Worker *${worker}* for *${category}* reported 'Done' to central sheet.`);
-        return; // Success, exit function
+        return; // Success, exit retry loop
       } else if (responseCode === 200 && responseText === 'SERVER_BUSY') {
-        Logger.log(`⚠️ Central sheet is busy. Retrying... (Attempt ${attempt}/${MAX_RETRIES})`);
-        AHA_SlackNotify3(`⚠️ Worker *${worker}* for *${category}*: Central sheet busy. Retrying...`);
-        Utilities.sleep(RETRY_DELAY_MS); // Wait before retrying
+        throw new Error('Server is busy, will retry.'); // Throw an error to trigger the retry
       } else {
-        Logger.log(`❌ Central sheet returned error: Code ${responseCode}, Response: ${responseText}`);
-        AHA_SlackNotify3(`❌ Worker *${worker}* for *${category}*: Central sheet error: ${responseText} (Code: ${responseCode}) <@U08TUF8LW2H>`);
-        if (attempt < MAX_RETRIES) {
-          Utilities.sleep(RETRY_DELAY_MS);
-        } else {
-          throw new Error(`Failed to notify central sheet after ${MAX_RETRIES} attempts. Last error: ${responseText}`);
-        }
+        // For other errors, we also throw to retry, but might fail eventually.
+        throw new Error(`Central sheet returned error: Code ${responseCode}, Response: ${responseText}`);
       }
-    } catch (err) {
-      Logger.log(`❌ Network/Fetch error when notifying central sheet (Attempt ${attempt}/${MAX_RETRIES}): ${err.message}`);
-      AHA_SlackNotify3(`❌ Worker *${worker}* for *${category}*: Network error notifying central sheet: ${err.message} <@U08TUF8LW2H>`);
-      if (attempt < MAX_RETRIES) {
-        Utilities.sleep(RETRY_DELAY_MS);
-      } else {
-        throw new Error(`Failed to notify central sheet after ${MAX_RETRIES} attempts due to network error: ${err.message}`);
-      }
-    }
+    }, 'Notify Central Sheet', 5, 5000); // Retry 5 times, starting with a 5-second delay
+
+  } catch (err) {
+    Logger.log(`❌ Failed to notify central sheet after all retries: ${err.message}`);
+    AHA_SlackNotify3(`❌ Worker *${properties.getProperty("WORKER_COUNT")}* for *${properties.getProperty("WORKER_CATEGORY")}*: Failed to notify central sheet after all retries. <@U08TUF8LW2H>`);
+  } finally {
+    const end = new Date();
+    AHA_LogRuntime3(end - start);
   }
-  Logger.log(`❌ Failed to notify central sheet after ${MAX_RETRIES} attempts.`);
-  AHA_SlackNotify3(`❌ Worker *${worker}* for *${category}*: Failed to notify central sheet after ${MAX_RETRIES} attempts. <@U08TUF8LW2H>`);
-
-  AHA_LogRuntime3(new Date() - start);
 }
-
-
-
-
-
-
-
-
-
-
-
 

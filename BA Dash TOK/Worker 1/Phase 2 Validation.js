@@ -586,16 +586,20 @@ function AHA_MoveFile2(file, targetFolderIdentifier, category = null, sheetData 
         const folders = parentFolder.getFoldersByName(actualTargetFolderName);
         const targetFolder = folders.hasNext() ? folders.next() : parentFolder.createFolder(actualTargetFolderName);
         
-        Drive.Files.update({ parents: [{ id: targetFolder.getId() }] }, file.getId(), null, { supportsAllDrives: true });
-        DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty("MOVE_FOLDER_ID")).removeFile(file);
+        // Wrap the Drive API calls in a retry block
+        AHA_ExecuteWithRetry(() => {
+          // These two operations should happen together.
+          Drive.Files.update({ parents: [{ id: targetFolder.getId() }] }, file.getId(), null, { supportsAllDrives: true });
+          DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty("MOVE_FOLDER_ID")).removeFile(file);
+        }, `Move File: ${file.getName()}`, 3, 2000);
+
 
         return actualTargetFolderName;
 
     } catch (err) {
-        Logger.log(`Move error for file ${file.getName()}: ${err.toString()}`);
-        // --- MODIFICATION: Re-throw the error to trigger the retry loop ---
-        // This will allow the general retry mechanism in AHA_ValidationBatch2 to catch it.
-        throw err;
+        // This catch block now catches the final error after all retries have failed.
+        Logger.log(`Move error for file ${file.getName()} after retries: ${err.toString()}`);
+        throw err; // Re-throw so the main validation loop can mark the file as failed.
     }
 }
 

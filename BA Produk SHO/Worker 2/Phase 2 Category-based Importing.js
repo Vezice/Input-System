@@ -310,16 +310,19 @@ function AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRow
     const content = data.slice(startDataRow).filter(row => row[0] !== "" && row[0] != null);
 
     if (content.length > 0) {
-      const targetRow = targetSheet.getLastRow() + 1;
       const folderCol = Array(content.length).fill([folderName]); // Create the brand code column.
 
-      targetSheet.getRange(targetRow, 1, content.length, 1).setValues(folderCol);
-      targetSheet.getRange(targetRow, 2, content.length, content[0].length).setValues(content);
+      // Wrap the sheet writing in a retry
+      AHA_ExecuteWithRetry(() => {
+        const targetRow = targetSheet.getLastRow() + 1;
+        targetSheet.getRange(targetRow, 1, content.length, 1).setValues(folderCol);
+        targetSheet.getRange(targetRow, 2, content.length, content[0].length).setValues(content);
+      }, `Write to Sheet: ${targetSheet.getName()}`, 3, 1500);
       return true;
     }
     return false; // No content rows found.
   } catch (err) {
-    Logger.log(`Error in AHA_ProcessGenericFile: ${err.message}`);
+    Logger.log(`Error in AHA_ProcessGenericFile after retries: ${err.message}`);
     return false;
   }
 }
@@ -548,17 +551,20 @@ const importDispatch = {
  */
 function AHA_ConvertFileToGoogleSheet(file) {
   try {
-    const blob = file.getBlob();
-    const resource = {
-      title: `[TEMP CONVERSION] ${file.getName()}`,
-      mimeType: MimeType.GOOGLE_SHEETS,
-      parents: [{ id: file.getParents().next().getId() }]
-    };
-    const newFile = Drive.Files.insert(resource, blob, { convert: true, supportsAllDrives: true });
-    return newFile.id;
+    return AHA_ExecuteWithRetry(() => {
+      const blob = file.getBlob();
+      const resource = {
+        title: `[TEMP CONVERSION] ${file.getName()}`,
+        mimeType: MimeType.GOOGLE_SHEETS,
+        parents: [{ id: file.getParents().next().getId() }]
+      };
+      // The Drive.Files.insert call is now protected by the retry wrapper.
+      const newFile = Drive.Files.insert(resource, blob, { convert: true, supportsAllDrives: true });
+      return newFile.id;
+    }, `Convert File: ${file.getName()}`, 3, 3000);
   } catch (err) {
-    Logger.log(`Error converting file ${file.getName()}: ${err.message}`);
-    return null;
+    Logger.log(`Error converting file ${file.getName()} after all retries: ${err.message}`);
+    return null; // Return null on final failure
   }
 }
 

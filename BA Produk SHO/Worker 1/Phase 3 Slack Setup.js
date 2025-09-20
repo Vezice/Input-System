@@ -8,33 +8,38 @@
 function AHA_SlackNotify3(message) {
   const start = new Date();
   try {
+    const url = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_URL");
+    if (!url) {
+      Logger.log("❌ Webhook URL not found. Run setSlackWebhookUrl() first.");
+      return;
+    }
+    const workerCount = PropertiesService.getScriptProperties().getProperty("WORKER_COUNT");
+    const category = PropertiesService.getScriptProperties().getProperty("WORKER_CATEGORY");
 
-  const url = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_URL");
-  if (!url) {
-    Logger.log("❌ Webhook URL not found. Run setSlackWebhookUrl() first.");
-    return;
-  }
-  const workerCount = PropertiesService.getScriptProperties().getProperty("WORKER_COUNT");
-  const category = PropertiesService.getScriptProperties().getProperty("WORKER_CATEGORY");
+    const workerMessage = category + " - " + workerCount + " : " + message;
 
-  const workerMessage = category + " - " + workerCount + " : " + message // CHANGE THIS
+    const payload = JSON.stringify({
+      text: workerMessage,
+      username: "Google Sheets Bot",
+      icon_emoji: ":robot_face:"
+    });
 
-  const payload = JSON.stringify({
-    text: workerMessage,
-    username: "Google Sheets Bot",
-    icon_emoji: ":robot_face:"
-  });
+    const options = {
+      method: "POST",
+      contentType: "application/json",
+      payload: payload,
+      muteHttpExceptions: false // Set to false to allow catch block to trigger
+    };
 
-  const options = {
-    method: "POST",
-    contentType: "application/json",
-    payload: payload,
-    muteHttpExceptions: true
-  };
+    // Wrap the UrlFetchApp call in the retry helper
+    AHA_ExecuteWithRetry(() => {
+      const response = UrlFetchApp.fetch(url, options);
+      Logger.log("Slack response: " + response.getContentText());
+    }, 'Send Slack Notification', 3, 1000); // Retry 3 times, starting with a 1-second delay
 
-  const response = UrlFetchApp.fetch(url, options);
-  Logger.log("Slack response: " + response.getContentText());
-
+  } catch (err) {
+    // The retry helper will log the final failure, but we can log here too.
+    Logger.log(`❌ Slack notification failed permanently: ${err.message}`);
   } finally {
     const end = new Date();
     AHA_LogRuntime3(end - start);
