@@ -389,9 +389,10 @@ function AHA_ProcessBAProdukTIKFile(data, targetSheet, logSheet, folderName, dat
   return AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex);
 }
 
+
 /**
  * Special processing function for BA Dash LAZ files.
- * It truncates decimals from numbers, ignores percentages, and applies number formatting.
+ * It reformats the date, truncates decimals from numbers, ignores percentages, and applies number formatting.
  */
 function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataRowIndex) {
     try {
@@ -405,9 +406,27 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
         const rowToImport = data[targetRowIndexInFile];
         const processedRow = [];
 
-        // Loop through each cell in the row to process it
-        for (const cell of rowToImport) {
-            let value = cell;
+        // --- MODIFICATION: Changed to a standard for-loop to get the column index ---
+        for (let i = 0; i < rowToImport.length; i++) {
+            let value = rowToImport[i];
+
+            // --- NEW: Logic to reformat the date in the first data column (index 0) ---
+            if (i === 0) {
+                try {
+                    // Check if the value is in YYYY-MM-DD format
+                    if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                        const dateObject = new Date(value);
+                        // Format to "DD MMM YYYY", e.g., "12 Sep 2025"
+                        value = Utilities.formatDate(dateObject, Session.getScriptTimeZone(), "dd MMM yyyy");
+                    }
+                } catch (e) {
+                    // If formatting fails, leave the original value and log the error
+                    Logger.log(`Could not format date for BA Dash LAZ. Original value: '${value}'. Error: ${e.message}`);
+                }
+                processedRow.push(value);
+                continue; // Move to the next cell
+            }
+            // --- END OF NEW LOGIC ---
 
             // Rule: Keep an eye out on the values with percentage (%) symbol. Don't touch them.
             if (typeof value === 'string' && value.includes('%')) {
@@ -432,15 +451,13 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
             // Set the processed data starting from the second column
             targetSheet.getRange(targetRow, 2, 1, processedRow.length).setValues([processedRow]);
             
-            // --- MODIFICATION ---
             // Apply the number format ONLY to the cells that contain numbers,
             // starting from the THIRD column (Column C) onwards.
             // This leaves the date in Column B untouched.
-            if (processedRow.length > 1) { // Ensure there are number columns to format
+            if (processedRow.length > 1) { 
                 const numberRange = targetSheet.getRange(targetRow, 3, 1, processedRow.length - 1);
                 numberRange.setNumberFormat("#,##0");
             }
-            // --- END MODIFICATION ---
             
             return true;
         }
