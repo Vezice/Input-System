@@ -83,6 +83,7 @@ function AHA_ImportByCategoryBatch2() {
 /**
  * --- CORE BATCH PROCESSING (IMPORT) ---
  * Processes a batch of files for import, with a 5-attempt retry mechanism for failures.
+ * -- MODIFIED to standardize column order based on 'Type Validation' sheet --
  */
 function AHA_ImportCategoryBatchInBatches2() {
     const start = new Date();
@@ -92,20 +93,17 @@ function AHA_ImportCategoryBatchInBatches2() {
         if (!inputSheet) throw new Error(`Sheet '${CONFIG.SHEET_NAMES.INPUT}' not found.`);
         const logSheet = ss.getSheetByName(CONFIG.SHEET_NAMES.LOGS);
         if (!logSheet) throw new Error(`Sheet '${CONFIG.SHEET_NAMES.LOGS}' not found.`);
-
-        // --- NEW: Pre-fetch potential header rows, just like in the validation script ---
         const typeValidationSheet = ss.getSheetByName(CONFIG.SHEET_NAMES.TYPE_VALIDATION);
         if (!typeValidationSheet) throw new Error(`Sheet '${CONFIG.SHEET_NAMES.TYPE_VALIDATION}' not found.`);
 
         const headerRowIndicesFromSheet = typeValidationSheet.getRange(2, 2, typeValidationSheet.getLastRow() - 1, 1).getValues()
             .flat()
             .filter(rowIdx => typeof rowIdx === 'number' && rowIdx >= 1)
-            .map(rowIdx => rowIdx - 1); // Convert to 0-based index
+            .map(rowIdx => rowIdx - 1);
         const potentialHeaderRowsToCheck = [...new Set(headerRowIndicesFromSheet)].sort((a, b) => a - b);
         if (potentialHeaderRowsToCheck.length === 0) {
             potentialHeaderRowsToCheck.push(0);
         }
-        // --- END NEW CODE ---
 
         const rootFolder = DriveApp.getFolderById(CONFIG.FOLDER_IDS.ROOT_SHARED_DRIVE);
         if (!rootFolder) throw new Error(`Root Drive folder not found by ID: ${CONFIG.FOLDER_IDS.ROOT_SHARED_DRIVE}.`);
@@ -178,19 +176,16 @@ function AHA_ImportCategoryBatchInBatches2() {
                             DriveApp.getFileById(tempConvertedFileId).setTrashed(true);
                             tempConvertedFileId = null;
 
-                            // --- MODIFIED: Loop through potential header rows to find the correct category info ---
-                            let categoryInfoForFile = { category: "Unknown", headerRowIndex: 1, dataRowIndex: 2 }; // Default value
+                            let categoryInfoForFile = { category: "Unknown", headerRowIndex: 1, dataRowIndex: 2 };
                             for (const rowIndexToCheck of potentialHeaderRowsToCheck) {
                                 if (fileContentData[rowIndexToCheck] && Array.isArray(fileContentData[rowIndexToCheck])) {
                                     const result = AHA_GetCategory2(fileContentData[rowIndexToCheck], fileName);
                                     if (result.category !== "Unknown") {
-                                        // We found a match! Use this info and stop searching.
                                         categoryInfoForFile = result;
                                         break; 
                                     }
                                 }
                             }
-                            // --- END MODIFICATION ---
 
                             let fileDataRowIndex = categoryInfoForFile.dataRowIndex;
                             let targetSheet = categorySheetCache[category];
@@ -200,37 +195,43 @@ function AHA_ImportCategoryBatchInBatches2() {
                                 if (!targetSheet) throw new Error(`Could not get or assign temp sheet for category: ${category}`);
                                 categorySheetCache[category] = targetSheet;
                             }
-
+                            
+                            // --- NEW LOGIC START ---
+                            // Check if headers need to be set for the target sheet
                             if (targetSheet.getLastRow() === 0) {
-                                const headerRowIndex = categoryInfoForFile.headerRowIndex;
-                                const headers = fileContentData[headerRowIndex - 1] || [];
+                                const standardHeaders = AHA_GetStandardHeaders(category);
+                                if (standardHeaders.length === 0) {
+                                    throw new Error(`No standard headers found for category '${category}' in Type Validation sheet.`);
+                                }
+
                                 const processFunction = importDispatch[category];
-
-                                let totalHeaderCols = 0;
-
-                                if (processFunction === AHA_ProcessGenericFileNoBrand) {
-                                    if (headers.length > 0) {
-                                        targetSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-                                        totalHeaderCols = headers.length;
-                                    }
-                                } else {
-                                    targetSheet.getRange(1, 1).setValue("Akun");
-                                    if (headers.length > 0) {
-                                        targetSheet.getRange(1, 2, 1, headers.length).setValues([headers]);
-                                    }
-                                    totalHeaderCols = headers.length + 1;
-                                }
+                                let finalHeaders = [];
                                 
-                                if (totalHeaderCols > 0) {
-                                    targetSheet.getRange(1, 1, 1, totalHeaderCols).setFontWeight("bold").setBackground("yellow");
-                                    targetSheet.getRange(2, 1, 1000, totalHeaderCols).setNumberFormat("@");
+                                // Add "Akun" column for brand-based files
+                                if (processFunction !== AHA_ProcessGenericFileNoBrand) {
+                                    finalHeaders = ["Akun", ...standardHeaders];
+                                } else {
+                                    finalHeaders = standardHeaders;
                                 }
-                                Logger.log(`Set dynamic header for '${category}' from file '${fileName}'.`);
+
+                                targetSheet.getRange(1, 1, 1, finalHeaders.length).setValues([finalHeaders])
+                                    .setFontWeight("bold").setBackground("yellow");
+                                targetSheet.getRange(2, 1, 1000, finalHeaders.length).setNumberFormat("@");
+                                Logger.log(`Set standard header for '${category}'.`);
                             }
+                            
+                            // --- Create the column map FOR EVERY FILE ---
+                            const fileHeaders = fileContentData[categoryInfoForFile.headerRowIndex - 1] || [];
+                            const targetSheetHeaders = targetSheet.getRange(1, 1, 1, targetSheet.getLastColumn()).getValues()[0];
+                            const standardHeadersForMapping = importDispatch[category] !== AHA_ProcessGenericFileNoBrand ? targetSheetHeaders.slice(1) : targetSheetHeaders;
+                            
+                            const columnMap = AHA_CreateColumnMap(fileHeaders, standardHeadersForMapping);
+                            // --- NEW LOGIC END ---
 
                             const processFunction = importDispatch[category];
                             if (processFunction) {
-                                importSuccess = processFunction(fileContentData, targetSheet, logSheet, folderName, fileDataRowIndex);
+                                // Pass the new columnMap to the processing function
+                                importSuccess = processFunction(fileContentData, targetSheet, logSheet, folderName, fileDataRowIndex, columnMap);
                             } else {
                                 Logger.log(`⚠️ No specific import function for category: ${category}. Skipping.`);
                                 AHA_SlackNotify3(`⚠️ No import function for ${category}. Skipping ${fileName} ${CONFIG.SLACK.MENTION_USER}`);
@@ -300,51 +301,72 @@ function AHA_ImportCategoryBatchInBatches2() {
 
 /**
  * Generic function for categories that require a brand code ("Akun") column.
- * Appends all data from a starting row.
+ * Appends all data from a starting row after reordering columns based on the map.
  */
-function AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex) {
+function AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap) {
   try {
     const startDataRow = dataRowIndex - 1;
-    if (startDataRow >= data.length) {
-      return false; // No data to import.
-    }
-    const content = data.slice(startDataRow).filter(row => row[0] !== "" && row[0] != null);
+    if (startDataRow >= data.length) return false;
+
+    const content = data.slice(startDataRow).filter(row => row.some(cell => cell !== "" && cell != null));
 
     if (content.length > 0) {
-      const folderCol = Array(content.length).fill([folderName]); // Create the brand code column.
+      const standardColumnCount = targetSheet.getLastColumn() - 1; // Exclude the 'Akun' column
+      const transformedData = [];
 
-      // Wrap the sheet writing in a retry
-      AHA_ExecuteWithRetry(() => {
-        const targetRow = targetSheet.getLastRow() + 1;
-        targetSheet.getRange(targetRow, 1, content.length, 1).setValues(folderCol);
-        targetSheet.getRange(targetRow, 2, content.length, content[0].length).setValues(content);
-      }, `Write to Sheet: ${targetSheet.getName()}`, 3, 1500);
+      for (const sourceRow of content) {
+        const newRow = new Array(standardColumnCount).fill('');
+        for (let i = 0; i < columnMap.length; i++) {
+          const destIndex = columnMap[i];
+          if (destIndex !== -1 && i < sourceRow.length) { // Ensure source column exists
+            newRow[destIndex] = sourceRow[i];
+          }
+        }
+        transformedData.push(newRow);
+      }
+      
+      const folderCol = Array(transformedData.length).fill([folderName]);
+      const targetRow = targetSheet.getLastRow() + 1;
+
+      targetSheet.getRange(targetRow, 1, transformedData.length, 1).setValues(folderCol);
+      targetSheet.getRange(targetRow, 2, transformedData.length, standardColumnCount).setValues(transformedData);
       return true;
     }
-    return false; // No content rows found.
+    return false;
   } catch (err) {
-    Logger.log(`Error in AHA_ProcessGenericFile after retries: ${err.message}`);
+    Logger.log(`Error in AHA_ProcessGenericFile: ${err.message}`);
     return false;
   }
 }
 
 /**
  * Generic function for categories that DO NOT require a brand code column.
- * Imports data directly starting from column A.
+ * Imports data directly after reordering columns based on the map.
  */
-function AHA_ProcessGenericFileNoBrand(data, targetSheet, logSheet, folderName, dataRowIndex) {
+function AHA_ProcessGenericFileNoBrand(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap) {
   try {
     const startDataRow = dataRowIndex - 1;
-    if (startDataRow >= data.length) {
-      return false;
-    }
-    // Filter out completely empty rows.
+    if (startDataRow >= data.length) return false;
+
     const content = data.slice(startDataRow).filter(row => row.some(cell => cell !== "" && cell != null));
 
     if (content.length > 0) {
+      const standardColumnCount = targetSheet.getLastColumn();
+      const transformedData = [];
+
+      for (const sourceRow of content) {
+        const newRow = new Array(standardColumnCount).fill('');
+        for (let i = 0; i < columnMap.length; i++) {
+          const destIndex = columnMap[i];
+          if (destIndex !== -1 && i < sourceRow.length) {
+            newRow[destIndex] = sourceRow[i];
+          }
+        }
+        transformedData.push(newRow);
+      }
+      
       const targetRow = targetSheet.getLastRow() + 1;
-      // Writes the data starting in column 1 (A).
-      targetSheet.getRange(targetRow, 1, content.length, content[0].length).setValues(content);
+      targetSheet.getRange(targetRow, 1, transformedData.length, standardColumnCount).setValues(transformedData);
       return true;
     }
     return false;
@@ -723,4 +745,51 @@ function AHA_DeleteUnusedTempSheets2() {
   });
 }
 
+/**
+ * Reads the 'Type Validation' sheet to get the standard, ordered list of headers for a given category.
+ * @param {string} category The category to look up.
+ * @returns {Array<string>} An array of standard header names.
+ */
+function AHA_GetStandardHeaders(category) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG.SHEET_NAMES.TYPE_VALIDATION);
+  if (!sheet) return [];
+
+  const data = sheet.getRange("A2:Z" + sheet.getLastRow()).getValues();
+
+  for (const row of data) {
+    if (row[0] === category) {
+      // Headers start from column E (index 4). Filter out any empty cells.
+      return row.slice(4).filter(String);
+    }
+  }
+  return []; // Return empty array if category is not found
+}
+
+
+/**
+ * Compares the headers from an imported file to the standard headers and creates a map for reordering.
+ * @param {Array<string>} fileHeaders The headers from the source file.
+ *- * @param {Array<string>} standardHeaders The master list of headers from the validation sheet.
+ * @returns {Array<number>} An array where the index is the source column and the value is the destination column index. -1 means the column should be ignored.
+ */
+function AHA_CreateColumnMap(fileHeaders, standardHeaders) {
+  // Create a Map for quick, case-insensitive lookups of standard headers and their positions.
+  const standardHeaderMap = new Map(
+    standardHeaders.map((header, index) => [header.toString().toLowerCase().trim(), index])
+  );
+  
+  const columnMap = new Array(fileHeaders.length);
+
+  fileHeaders.forEach((header, sourceIndex) => {
+    const standardizedFileHeader = (header || "").toString().toLowerCase().trim();
+    if (standardHeaderMap.has(standardizedFileHeader)) {
+      columnMap[sourceIndex] = standardHeaderMap.get(standardizedFileHeader);
+    } else {
+      // If the file's header is not in the standard list, mark it to be ignored.
+      columnMap[sourceIndex] = -1;
+    }
+  });
+  return columnMap;
+}
 
