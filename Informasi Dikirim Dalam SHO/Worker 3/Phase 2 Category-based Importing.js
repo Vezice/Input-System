@@ -318,7 +318,7 @@ function AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRow
         const newRow = new Array(standardColumnCount).fill('');
         for (let i = 0; i < columnMap.length; i++) {
           const destIndex = columnMap[i];
-          if (destIndex !== -1 && i < sourceRow.length) { // Ensure source column exists
+          if (destIndex !== -1 && i < sourceRow.length) { 
             newRow[destIndex] = sourceRow[i];
           }
         }
@@ -338,6 +338,7 @@ function AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRow
     return false;
   }
 }
+
 
 /**
  * Generic function for categories that DO NOT require a brand code column.
@@ -376,88 +377,104 @@ function AHA_ProcessGenericFileNoBrand(data, targetSheet, logSheet, folderName, 
   }
 }
 
-function AHA_ProcessBAProdukSHOFile(data, targetSheet, logSheet, folderName, dataRowIndex) {
-  return AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex);
+// --- FIX: All functions below now accept 'columnMap' ---
+
+function AHA_ProcessBAProdukSHOFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap) {
+  return AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap);
 }
 
 /**
  * Special function for BA Dash SHO files that imports only one specific row.
  */
-function AHA_ProcessBADashSHOFile(data, targetSheet, logSheet, folderName, dataRowIndex) {
+function AHA_ProcessBADashSHOFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap) {
   try {
-    const targetRowIndexInFile = dataRowIndex - 1;
-    const rowToImport = data[targetRowIndexInFile];
+    // This function uses column mapping for robustness, even for a single row.
+    const startDataRow = dataRowIndex - 1;
+    if (startDataRow >= data.length) return false;
 
-    if (rowToImport && rowToImport.length > 0 && (rowToImport[0] !== "" && rowToImport[0] != null)) {
-      if (typeof rowToImport[0] === 'string' && rowToImport[0].length > 10) {
-        rowToImport[0] = rowToImport[0].substring(0, 10);
-      }
-      const targetRow = targetSheet.getLastRow() + 1;
-      targetSheet.getRange(targetRow, 1).setValue(folderName);
-      targetSheet.getRange(targetRow, 2, 1, rowToImport.length).setValues([rowToImport]);
-      return true;
+    const sourceRow = data[startDataRow];
+    if (!sourceRow || !sourceRow.some(cell => cell !== "" && cell != null)) return false;
+    
+    const standardColumnCount = targetSheet.getLastColumn() - 1; // Exclude 'Akun'
+    const transformedRow = new Array(standardColumnCount).fill('');
+
+    for (let i = 0; i < columnMap.length; i++) {
+        const destIndex = columnMap[i];
+        if (destIndex !== -1 && i < sourceRow.length) {
+            transformedRow[destIndex] = sourceRow[i];
+        }
     }
-    return false;
+
+    // Special logic to truncate the first column's data if it's a date string
+    if (typeof transformedRow[0] === 'string' && transformedRow[0].length > 10) {
+        transformedRow[0] = transformedRow[0].substring(0, 10);
+    }
+
+    const targetRow = targetSheet.getLastRow() + 1;
+    targetSheet.getRange(targetRow, 1).setValue(folderName);
+    targetSheet.getRange(targetRow, 2, 1, transformedRow.length).setValues([transformedRow]);
+    return true;
+
   } catch (err) {
     Logger.log(`Error processing BA Dash SHO file: ${err.message}`);
     return false;
   }
 }
 
-function AHA_ProcessBAProdukLAZFile(data, targetSheet, logSheet, folderName, dataRowIndex) {
-  return AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex);
+function AHA_ProcessBAProdukLAZFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap) {
+  return AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap);
 }
 
-function AHA_ProcessBAProdukTIKFile(data, targetSheet, logSheet, folderName, dataRowIndex) {
-  return AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex);
+function AHA_ProcessBAProdukTIKFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap) {
+  return AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap);
 }
-
 
 /**
  * Special processing function for BA Dash LAZ files.
  * It reformats the date, truncates decimals from numbers, ignores percentages, and applies number formatting.
  */
-function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataRowIndex) {
+function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap) {
     try {
-        const targetRowIndexInFile = dataRowIndex - 1;
+        const startDataRow = dataRowIndex - 1;
+        if (startDataRow >= data.length) return false;
+
+        const sourceRow = data[startDataRow];
+        if (!sourceRow || !sourceRow.some(cell => cell !== "" && cell != null)) return false;
+
+        const standardColumnCount = targetSheet.getLastColumn() - 1;
+        const transformedRow = new Array(standardColumnCount).fill('');
         
-        if (!data[targetRowIndexInFile]) {
-             Logger.log(`Row ${dataRowIndex} not found in BA Dash LAZ file.`);
-             return false;
+        // Reorder the data first using the map
+        for (let i = 0; i < columnMap.length; i++) {
+            const destIndex = columnMap[i];
+            if (destIndex !== -1 && i < sourceRow.length) {
+                transformedRow[destIndex] = sourceRow[i];
+            }
         }
 
-        const rowToImport = data[targetRowIndexInFile];
+        // Now, apply special formatting to the ordered data
         const processedRow = [];
+        for (let i = 0; i < transformedRow.length; i++) {
+            let value = transformedRow[i];
 
-        // --- MODIFICATION: Changed to a standard for-loop to get the column index ---
-        for (let i = 0; i < rowToImport.length; i++) {
-            let value = rowToImport[i];
-
-            // --- NEW: Logic to reformat the date in the first data column (index 0) ---
-            if (i === 0) {
+            if (i === 0) { // Date formatting for the first data column
                 try {
-                    // Check if the value is in YYYY-MM-DD format
                     if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}$/)) {
                         const dateObject = new Date(value);
-                        // Format to "DD MMM YYYY", e.g., "12 Sep 2025"
                         value = Utilities.formatDate(dateObject, Session.getScriptTimeZone(), "dd MMM yyyy");
                     }
                 } catch (e) {
-                    // If formatting fails, leave the original value and log the error
                     Logger.log(`Could not format date for BA Dash LAZ. Original value: '${value}'. Error: ${e.message}`);
                 }
                 processedRow.push(value);
-                continue; // Move to the next cell
+                continue;
             }
-            // --- END OF NEW LOGIC ---
 
-            // Rule: Keep an eye out on the values with percentage (%) symbol. Don't touch them.
             if (typeof value === 'string' && value.includes('%')) {
                 processedRow.push(value);
-                continue; // Skip to the next cell
+                continue;
             }
 
-            // Rule: Turn every number that was imported to always remove anything behind the dot.
             if (value !== null && value !== '' && !isNaN(value)) {
                 value = parseInt(value, 10);
             }
@@ -468,15 +485,9 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
         if (processedRow.length > 0) {
             const targetRow = targetSheet.getLastRow() + 1;
             
-            // Set the brand code in the first column
             targetSheet.getRange(targetRow, 1).setValue(folderName);
-            
-            // Set the processed data starting from the second column
             targetSheet.getRange(targetRow, 2, 1, processedRow.length).setValues([processedRow]);
             
-            // Apply the number format ONLY to the cells that contain numbers,
-            // starting from the THIRD column (Column C) onwards.
-            // This leaves the date in Column B untouched.
             if (processedRow.length > 1) { 
                 const numberRange = targetSheet.getRange(targetRow, 3, 1, processedRow.length - 1);
                 numberRange.setNumberFormat("#,##0");
@@ -491,38 +502,46 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
     }
 }
 
-function AHA_ProcessBADashTIKFile(data, targetSheet, logSheet, folderName, dataRowIndex) {
-  return AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex);
+function AHA_ProcessBADashTIKFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap) {
+  return AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap);
 }
 
-function AHA_ProcessBADashTOKFile(data, targetSheet, logSheet, folderName, dataRowIndex) {
-  return AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex);
+function AHA_ProcessBADashTOKFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap) {
+  return AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap);
 }
 
 /**
  * Special function for Demografis BSL. It filters rows ending with "MON-M" in the
  * second column and moves them to a separate sheet.
  */
-function AHA_ProcessDemografisBSLFile(data, targetSheet, logSheet, folderName, dataRowIndex) {
+function AHA_ProcessDemografisBSLFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap) {
     try {
         const startDataRow = dataRowIndex - 1;
-        if (startDataRow >= data.length) {
-            return false; // No data to process.
-        }
+        if (startDataRow >= data.length) return false;
 
         const content = data.slice(startDataRow).filter(row => row.some(cell => cell !== "" && cell != null));
-        if (content.length === 0) {
-            return false; // No content rows found.
-        }
+        if (content.length === 0) return false;
 
-        // --- NEW: Filtering and Routing Logic ---
+        // Apply column mapping to all rows first
+        const standardColumnCount = targetSheet.getLastColumn();
+        const transformedContent = content.map(sourceRow => {
+            const newRow = new Array(standardColumnCount).fill('');
+            for (let i = 0; i < columnMap.length; i++) {
+                const destIndex = columnMap[i];
+                if (destIndex !== -1 && i < sourceRow.length) {
+                    newRow[destIndex] = sourceRow[i];
+                }
+            }
+            return newRow;
+        });
+
         const defaultRows = [];
         const monRows = [];
         const MON_M_SUFFIX = "MON-M";
 
-        // Separate the rows into two lists based on the condition.
-        for (const row of content) {
-            const columnBValue = row[1]; // Get the value from the second column.
+        // Now, filter the standardized rows
+        for (const row of transformedContent) {
+            const columnBValue = row[1];
             if (typeof columnBValue === 'string' && columnBValue.endsWith(MON_M_SUFFIX)) {
                 monRows.push(row);
             } else {
@@ -532,20 +551,17 @@ function AHA_ProcessDemografisBSLFile(data, targetSheet, logSheet, folderName, d
 
         let importOccurred = false;
 
-        // Write the default rows to the standard sheet.
         if (defaultRows.length > 0) {
             const targetRow = targetSheet.getLastRow() + 1;
             targetSheet.getRange(targetRow, 1, defaultRows.length, defaultRows[0].length).setValues(defaultRows);
             importOccurred = true;
         }
 
-        // Write the "MON-M" rows to the special sheet.
         if (monRows.length > 0) {
             const ss = SpreadsheetApp.getActiveSpreadsheet();
             const monSheetName = 'Temp Demografis BSL MON-M';
             const monSheet = AHA_GetOrCreateSheet2(monSheetName);
 
-            // If the special sheet is new, copy the headers from the main sheet.
             if (monSheet.getLastRow() === 0 && targetSheet.getLastRow() > 0) {
                 const headerRange = targetSheet.getRange(1, 1, 1, targetSheet.getLastColumn());
                 headerRange.copyTo(monSheet.getRange(1, 1));
@@ -564,6 +580,10 @@ function AHA_ProcessDemografisBSLFile(data, targetSheet, logSheet, folderName, d
     }
 }
 
+
+
+// === CATEGORY-SPECIFIC IMPORT FUNCTIONS ===
+
 // === DISPATCH MAP: Routes categories to the correct processing function ===
 const importDispatch = {
   "BA Produk SHO": AHA_ProcessBAProdukSHOFile,
@@ -579,7 +599,8 @@ const importDispatch = {
   "Informasi Dikirim Dalam SHO": AHA_ProcessGenericFile,
   "Export SKU LAZ": AHA_ProcessGenericFile,
   "Export SKU TIK": AHA_ProcessGenericFile,
-  "Demografis BSL": AHA_ProcessDemografisBSLFile
+  "Demografis BSL": AHA_ProcessDemografisBSLFile,
+  "Proyeksi Stok BSL": AHA_ProcessGenericFileNoBrand
 };
 
 // === HELPER FUNCTIONS ===
@@ -660,6 +681,7 @@ function AHA_StartCreateTempSheetsBatch2() {
 
 /**
  * Creates one temporary sheet from the control list and reschedules itself.
+ * -- MODIFIED with a retry mechanism for sheet creation. --
  */
 function AHA_CreateNextTempSheet2() {
   const start = new Date();
@@ -673,17 +695,25 @@ function AHA_CreateNextTempSheet2() {
       const [name, status] = data[i];
       if (status !== "Done") {
         try {
-          const sheet = AHA_GetOrCreateSheet2(name);
-          sheet.clear(); // Ensure it's empty.
+          // --- NEW: Use the retry helper for the critical operation ---
+          AHA_ExecuteWithRetry(() => {
+            const sheet = AHA_GetOrCreateSheet2(name);
+            sheet.clear(); // Ensure it's empty.
+          }, `Create/Clear Temp Sheet ${name}`, 3, 3000); // Tries up to 3 times with a 3-second delay
+
+          // This code only runs if the retry block succeeds
           controlSheet.getRange(i + 2, 2).setValue("Done");
           Logger.log(`✅ Created/Cleared temp sheet: ${name}`);
           AHA_SlackNotify3(`✅ *Completed*: Created/Cleared temp sheet - ${name}!`);
+
         } catch (err) {
+          // This block runs only if ALL retries fail
           controlSheet.getRange(i + 2, 2).setValue("Error");
-          Logger.log(`❌ Error creating ${name}: ${err.message}`);
-          AHA_SlackNotify3(`❌ *Error*: Failed creating ${name} - ${err.message}! ${CONFIG.SLACK.MENTION_USER}`);
+          Logger.log(`❌ Final Error creating ${name} after all retries: ${err.message}`);
+          AHA_SlackNotify3(`❌ *Error*: Failed creating ${name} after all retries - ${err.message}! ${CONFIG.SLACK.MENTION_USER}`);
         }
 
+        // --- Rescheduling logic remains the same ---
         // If there are more sheets to create, reschedule.
         if (i < data.length - 1) {
           AHA_DeleteTriggers2("AHA_CreateNextTempSheet2");

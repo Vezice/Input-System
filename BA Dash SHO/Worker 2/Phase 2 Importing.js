@@ -97,70 +97,66 @@ function AHA_SortValidationList2() {
 /**
  * Archives processed files from their source folders into a structured "Archive" directory.
  * The archive structure is /Archive/[Category]/[Date]/[file].
+ * -- MODIFIED to use batched Slack notifications to avoid rate limiting. --
  */
 function AHA_ArchiveFilesByCategory2() {
   const start = new Date();
   try {
     // --- SETUP ---
     const ROOT_DRIVE_ID = "0AJyZWtXd1795Uk9PVA";
-    // Folders to ignore during the archive process.
     const EXCLUDED_FOLDERS = ["Failed", "Move", "Archive"];
     const root = DriveApp.getFolderById(ROOT_DRIVE_ID);
-    const archiveRoot = AHA_GetSubFolder2(root, "Archive"); // Get or create the main Archive folder.
-    const dateStamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd"); // Today's date for subfolders.
+    const archiveRoot = AHA_GetSubFolder2(root, "Archive");
+    const dateStamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
 
     const inputSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Input");
     const lastRow = inputSheet.getLastRow();
-
-    // Read the lists of all folders and files that were processed from the "Input" sheet.
-    // This ensures we only archive files that were part of the completed run.
+    
     const folderNames = inputSheet.getRange("B5:B" + lastRow).getValues().flat().filter(name => name);
     const fileNames = inputSheet.getRange("C5:C" + lastRow).getValues().flat().filter(name => name);
 
-    // Use Sets for very fast lookups to check if a folder or file should be archived.
     const foldersToArchive = new Set(folderNames);
     const filesToArchive = new Set(fileNames);
 
-    // Create a map of { folderName: category } to know where to archive each file.
     const categoryMap = AHA_GetCategoryFromSheet2();
-    const folders = root.getFolders(); // Get all folders in the root drive.
+    const folders = root.getFolders();
+
+    // --- NEW: Arrays to hold the results for batch notification ---
+    const successfulArchives = [];
+    const failedArchives = [];
 
     // --- MAIN ARCHIVING LOOP ---
-    // Iterate through all folders in the root directory.
     while (folders.hasNext()) {
       const sourceFolder = folders.next();
       const folderName = sourceFolder.getName();
 
-      // Skip folders that are excluded or were not part of this processing run.
-      if (EXCLUDED_FOLDERS.includes(folderName)) continue;
-      if (!foldersToArchive.has(folderName)) continue;
+      if (EXCLUDED_FOLDERS.includes(folderName) || !foldersToArchive.has(folderName)) {
+        continue;
+      }
 
-      // Iterate through all files within the current source folder.
       const files = sourceFolder.getFiles();
       while (files.hasNext()) {
         const file = files.next();
         const oldName = file.getName();
 
-        // Skip files that were not part of this processing run.
-        if (!filesToArchive.has(oldName)) continue;
+        if (!filesToArchive.has(oldName)) {
+          continue;
+        }
 
         const fileId = file.getId();
-        // Determine the destination category folder. Default to "Uncategorized" if not found.
         const category = categoryMap[folderName] || "Uncategorized";
         const categoryFolder = AHA_GetSubFolder2(archiveRoot, category);
         const datedFolder = AHA_GetSubFolder2(categoryFolder, dateStamp);
-        const newName = `${oldName}`; // In this version, the name is not changed.
 
         try {
-          // Get a list of all current parent folders of the file.
           const parentIds = [];
           const parents = file.getParents();
-          while (parents.hasNext()) parentIds.push(parents.next().getId());
+          while (parents.hasNext()) {
+            parentIds.push(parents.next().getId());
+          }
 
-          // Use the advanced Drive API to move the file by adding the new parent and removing all old ones.
-          // This is the most reliable way to move files in Shared Drives.
           Drive.Files.update(
-            { title: newName },
+            { title: oldName }, // Keep original name
             fileId,
             null, {
               supportsAllDrives: true,
@@ -168,20 +164,42 @@ function AHA_ArchiveFilesByCategory2() {
               removeParents: parentIds.join(",")
             }
           );
-
-          Logger.log(`✅ Archived: ${newName}`);
-          AHA_SlackNotify3("✅ *Archived* : " + newName);
+          
+          // --- MODIFICATION: Instead of sending a notification, add to the success list ---
+          successfulArchives.push(oldName);
+          Logger.log(`✅ Archived: ${oldName}`);
 
         } catch (err) {
-          Logger.log(`❌ Failed to archive ${oldName}: ${err}`);
-          AHA_SlackNotify3("❌ *Error*: Couldn't archive " + oldName + " : " + err + " <@U08TUF8LW2H>");
+          // --- MODIFICATION: Instead of sending a notification, add to the failure list ---
+          const errorMessage = `Failed to archive ${oldName}: ${err}`;
+          failedArchives.push(errorMessage);
+          Logger.log(`❌ ${errorMessage}`);
         }
       }
     }
 
-    Logger.log("✅ Archiving complete.");
-    AHA_SlackNotify3("✅ *Completed* : Archiving done!");
+    // --- NEW: Send one summary notification at the end ---
+    let summaryMessage = "";
 
+    if (successfulArchives.length > 0) {
+      summaryMessage += `✅ *Archiving Complete*\n*Successfully archived ${successfulArchives.length} files.*\n`;
+      // To keep the message clean, you might only list the first few or omit the list entirely
+      // For example: summaryMessage += "Including: " + successfulArchives.slice(0, 5).join(", ") + "\n";
+    }
+
+    if (failedArchives.length > 0) {
+      summaryMessage += `❌ *${failedArchives.length} files failed to archive.*\n`;
+      // Join the detailed error messages for the report
+      summaryMessage += "```\n" + failedArchives.join("\n") + "\n```"; 
+      summaryMessage += "<@U08TUF8LW2H>"; // Mention user on failure
+    }
+
+    if (summaryMessage) {
+        AHA_SlackNotify3(summaryMessage);
+    } else {
+        AHA_SlackNotify3("✅ Archiving complete. No new files to process.");
+    }
+    
   } finally {
     const end = new Date();
     AHA_LogRuntime3(end - start);
