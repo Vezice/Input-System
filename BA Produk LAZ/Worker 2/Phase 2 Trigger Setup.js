@@ -44,69 +44,6 @@ function AHA_CekStatusImport2() {
 }
 
 /**
- * --- SAFE BATCH RUNNER ---
- * This function is called by the time-based trigger. It uses a lock to ensure
- * only one instance of the import process runs at a time.
- * -- MODIFIED with a retry mechanism for acquiring the lock. --
- */
-function AHA_RunImportBatchSafely2() {
-    const start = new Date();
-    try {
-        const ss = SpreadsheetApp.getActiveSpreadsheet();
-        const logSheet = ss.getSheetByName("Logs");
-        const lock = LockService.getScriptLock();
-
-        // --- NEW: Retry Logic Configuration ---
-        const maxRetries = 3; // How many times to try getting the lock.
-        const retryDelay = 2 * 60 * 1000; // 2 minutes in milliseconds.
-
-        // --- NEW: Loop to attempt acquiring the lock ---
-        let lockAcquired = false;
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
-            if (lock.tryLock(10000)) {
-                // Successfully got the lock
-                lockAcquired = true;
-                break; // Exit the retry loop
-            }
-            
-            // If we're here, the lock was busy. Wait before the next attempt.
-            if (attempt < maxRetries - 1) {
-                Logger.log(`Lock is busy. Retrying in 2 minutes... (Attempt ${attempt + 1}/${maxRetries})`);
-                Utilities.sleep(retryDelay);
-            }
-        }
-
-        // If the lock was never acquired after all retries, give up.
-        if (!lockAcquired) {
-            Logger.log(`Could not acquire lock after ${maxRetries} attempts. Aborting.`);
-            AHA_SlackNotify3("⚠️ *Trigger cancelled*: Could not acquire lock after multiple attempts.");
-            return;
-        }
-
-        // If we get here, we have the lock. Proceed with the main logic.
-        try {
-            if (AHA_CekStatusImport2()) {
-                AHA_ImportByCategoryBatch2();
-            } else {
-                Logger.log("No files left to process.");
-                logSheet.appendRow([new Date(), "Status", "✅ All Files has been processed"]);
-                AHA_SlackNotify3("✅ *Completed* : All Files has been processed!");
-                AHA_RemoveAllTriggers2();
-            }
-        } catch (err) {
-            Logger.log("Error in processNextBatch: " + err);
-        } finally {
-            // CRITICAL: Always release the lock when done.
-            lock.releaseLock();
-        }
-
-    } finally {
-        const end = new Date();
-        AHA_LogRuntime3(end - start);
-    }
-}
-
-/**
  * Helper function to install the time-based trigger that runs the import process.
  */
 function AHA_InstallTrigger2() {
@@ -123,88 +60,16 @@ function AHA_InstallTrigger2() {
   }
 }
 
-/**
- * --- FINALIZATION & CLEANUP ---
- * This function is called when the import process is complete. It removes all triggers,
- * finalizes temp sheets, archives files, and sends final notifications.
- */
-function AHA_RemoveAllTriggers2() {
-  const start = new Date();
-  try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const inputSheet = ss.getSheetByName("Input");
 
-    // This section appears to be leftover code from an older workflow,
-    // as the outputSheetName variable is not used by the new category-based system.
-    const kode_mp = inputSheet.getRange("B1").getValues();
-    const kode_akun = inputSheet.getRange("C1").getValues();
-    const bulan = inputSheet.getRange("D1").getValues();
-    const outputSheetName = kode_mp + " " + kode_akun + " " + bulan;
 
-    // Set the master status to "OFFLINE".
-    inputSheet.getRange("A1").setValues([["SCRIPT OFFLINE"]]);
-
-    // Delete all existing triggers for this project to stop the script.
-    const triggers = ScriptApp.getProjectTriggers();
-    for (let t of triggers) {
-      ScriptApp.deleteTrigger(t);
-    }
-
-    // --- Finalize Temp Sheets ---
-    // This logic correctly chooses which finalization function to run based on the config flag.
-    if (!CONFIG.CATEGORY_IMPORTING_ENABLED) {
-      // If using the old system, finalize sheets one by one.
-      const categoriesRange = inputSheet.getRange("E5:E" + inputSheet.getLastRow()).getValues();
-      const allCategories = [...new Set(categoriesRange.flat().filter(Boolean))];
-      allCategories.forEach(category => {
-        try {
-          AHA_FinalizeSheetSwap2(category);
-        } catch (e) {
-          Logger.log(`❌ Failed to finalize sheet swap for category ${category}: ${e.message}`);
-          AHA_SlackNotify3("❌ *Error* : Failed to finalize sheet swap for category " + category + " : " + e.message + " <@U08TUF8LW2H>");
-        }
-      });
-    } else {
-      // If using the new category-based system, run the modern finalization function.
-      AHA_FinalizeAllTempSheets2();
-    }
-
-    // --- Archive and Clean Up ---
-    AHA_SlackNotify3("⚠️ *Archiving Files...*");
-    AHA_ArchiveFilesByCategory2(); // Archive all processed files.
-    AHA_DeleteUnusedTempSheets2(); // Delete leftover temp sheets like "Temp A", "Temp B", etc.
-    AHA_SlackNotify3("✅ *Import Completed* ✅");
-
-    // Set a one-time trigger for a final notification.
-    ScriptApp.newTrigger('AHA_NotifyCentral3')
-      .timeBased()
-      .after(60 * 1000) // 1 minute later
-      .create();
-
-  } finally {
-    const end = new Date();
-    AHA_LogRuntime3(end - start);
-  }
-}
-
-/**
- * --- SCRIPT INITIATION (IMPORT) ---
- * This is the entry point that kicks off the entire import sequence after validation is complete.
- */
 function AHA_StartImport2() {
   const start = new Date();
   try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const inputSheet = ss.getSheetByName("Input");
+    // --- MODIFICATION ---
+    PropertiesService.getScriptProperties().setProperty('SYSTEM_STATUS', 'IMPORTING');
+    AHA_SlackNotify3("⚠️ *Starting Import...* Status: IMPORTING");
     
-    // Update the master status to "IMPORTING".
-    inputSheet.getRange("A1").setValues([["IMPORTING"]]);
-    AHA_SlackNotify3("⚠️ *Starting Import...*");
-    
-    // Install the recurring trigger that will drive the batch processing.
     AHA_InstallTrigger2();
-    
-    // Sort the list of files to be imported for better organization.
     AHA_SortValidationList2();
 
   } finally {
@@ -214,10 +79,209 @@ function AHA_StartImport2() {
 }
 
 
+/**
+ * A helper function to check if a trigger for a specific function exists.
+ * @param {string} functionName The name of the function to check for.
+ * @returns {boolean} True if a trigger exists, false otherwise.
+ */
+function AHA_CheckForTrigger(functionName) {
+  try {
+    const triggers = ScriptApp.getProjectTriggers();
+    return triggers.some(trigger => trigger.getHandlerFunction() === functionName);
+  } catch (e) {
+    Logger.log(`Error checking for trigger ${functionName}: ${e.message}`);
+    return false; // Fail safe
+  }
+}
+
+function AHA_SystemWatchdog() {
+  // --- MODIFICATION ---
+  const status = PropertiesService.getScriptProperties().getProperty('SYSTEM_STATUS');
+
+  if (!status) { // If status is null or deleted, worker is OFFLINE
+    Logger.log("Watchdog: System is OFFLINE. No action needed.");
+    // In this new design, the watchdog should also delete itself if it finds it's
+    // running while the system is offline (e.g., after a manual stop).
+    AHA_DeleteTriggers2("AHA_SystemWatchdog");
+    return;
+  }
+  
+  if (status === "VALIDATING") {
+    if (!AHA_CheckForTrigger("AHA_RunValBatchSafely2")) {
+      AHA_SlackNotify3("⚠️ *Watchdog Alert*: System was stuck in VALIDATING. Restarting validation trigger. <@U08TUF8LW2H>");
+      AHA_StartValTrigger2(1);
+    }
+  }
+
+  if (status === "IMPORTING") {
+    if (!AHA_CheckForTrigger("AHA_RunImportBatchSafely2")) {
+      AHA_SlackNotify3("⚠️ *Watchdog Alert*: System was stuck in IMPORTING. Restarting import trigger. <@U08TUF8LW2H>");
+      AHA_InstallTrigger2();
+    }
+  }
+
+  const cleanupStatuses = ["FINALIZING", "ARCHIVING", "CLEANUP"];
+  if (cleanupStatuses.includes(status)) {
+    let handlerFunction = "";
+    if (status === "FINALIZING") handlerFunction = "AHA_RunFinalization";
+    if (status === "ARCHIVING") handlerFunction = "AHA_RunArchiving";
+    // Note: 'CLEANUP' is so fast, we just let it restart at 'ARCHIVING'
+    if (status === "CLEANUP") handlerFunction = "AHA_RunArchiving";
+
+    if (handlerFunction && !AHA_CheckForTrigger(handlerFunction)) {
+       AHA_SlackNotify3(`⚠️ *Watchdog Alert*: System was stuck in ${status}. Restarting failed step. <@U08TUF8LW2H>`);
+       ScriptApp.newTrigger(handlerFunction)
+         .timeBased()
+         .after(30 * 1000) 
+         .create();
+    }
+  }
+}
 
 
+/**
+ * --- SAFE BATCH RUNNER (MODIFIED) ---
+ * This function now calls the staged cleanup process instead of
+ * the old monolithic function.
+ */
+function AHA_RunImportBatchSafely2() {
+    const start = new Date();
+    try {
+        const ss = SpreadsheetApp.getActiveSpreadsheet();
+        const logSheet = ss.getSheetByName("Logs");
+        const lock = LockService.getScriptLock();
+        
+        const maxRetries = 3; 
+        const retryDelay = 2 * 60 * 1000; 
 
+        let lockAcquired = false;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            if (lock.tryLock(10000)) {
+                lockAcquired = true;
+                break; 
+            }
+            if (attempt < maxRetries - 1) {
+                Logger.log(`Lock is busy. Retrying in 2 minutes... (Attempt ${attempt + 1}/${maxRetries})`);
+                Utilities.sleep(retryDelay);
+            }
+        }
 
+        if (!lockAcquired) {
+            Logger.log(`Could not acquire lock after ${maxRetries} attempts. Aborting.`);
+            AHA_SlackNotify3("⚠️ *Trigger cancelled*: Could not acquire lock after multiple attempts.");
+            return;
+        }
+
+        try {
+            if (AHA_CekStatusImport2()) {
+                AHA_ImportByCategoryBatch2();
+            } else {
+                Logger.log("No files left to process. Starting final cleanup process...");
+                logSheet.appendRow([new Date(), "Status", "✅ All Files processed. Starting Cleanup."]);
+                AHA_SlackNotify3("✅ *Completed* : All Files has been processed! Starting Cleanup...");
+                
+                // --- MODIFICATION ---
+                // Instead of calling the old function, start the new staged process.
+                AHA_StartCleanupProcess();
+            }
+        } catch (err) {
+            Logger.log("Error in processNextBatch: " + err);
+        } finally {
+            lock.releaseLock();
+        }
+
+    } finally {
+        const end = new Date();
+        AHA_LogRuntime3(end - start);
+    }
+}
+
+function AHA_StartCleanupProcess() {
+  const triggers = ScriptApp.getProjectTriggers();
+  for (let t of triggers) {
+    if (t.getHandlerFunction() === "AHA_RunImportBatchSafely2") {
+      ScriptApp.deleteTrigger(t);
+      Logger.log("Deleted recurring import trigger.");
+      break;
+    }
+  }
+
+  // --- MODIFICATION ---
+  PropertiesService.getScriptProperties().setProperty('SYSTEM_STATUS', 'FINALIZING');
+  
+  ScriptApp.newTrigger("AHA_RunFinalization")
+    .timeBased()
+    .after(10 * 1000)
+    .create();
+}
+
+/**
+ * --- NEW FUNCTION: STEP 2 (FINALIZE SHEETS) ---
+ * Replaces the first part of the old AHA_RemoveAllTriggers2
+ */
+function AHA_RunFinalization() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inputSheet = ss.getSheetByName("Input");
+  
+  try {
+    if (CONFIG.CATEGORY_IMPORTING_ENABLED) {
+      AHA_FinalizeAllTempSheets2();
+    } else {
+      // Fallback for old system (if needed)
+      const categoriesRange = inputSheet.getRange("E5:E" + inputSheet.getLastRow()).getValues();
+      const allCategories = [...new Set(categoriesRange.flat().filter(Boolean))];
+      allCategories.forEach(category => {
+        try { AHA_FinalizeSheetSwap2(category); } 
+        catch (e) { Logger.log(`❌ Failed to finalize sheet swap for category ${category}: ${e.message}`); }
+      });
+    }
+
+    // Success: Set status and trigger next step
+    PropertiesService.getScriptProperties().setProperty('SYSTEM_STATUS', 'ARCHIVING');
+    ScriptApp.newTrigger("AHA_RunArchiving")
+      .timeBased()
+      .after(10 * 1000)
+      .create();
+
+  } catch (e) {
+    AHA_SlackNotify3(`❌ *Error*: Cleanup Step 'Finalization' failed: ${e.message} <@U08TUF8LW2H>`);
+    // Do not proceed. The watchdog will restart this step.
+  }
+}
+
+/**
+ * --- NEW FUNCTION: STEP 3 & 4 (ARCHIVE & CLEANUP) ---
+ * Replaces the rest of the old AHA_RemoveAllTriggers2
+ */
+function AHA_RunArchiving() {
+  try {
+    // --- MODIFICATION ---
+    PropertiesService.getScriptProperties().setProperty('SYSTEM_STATUS', 'CLEANUP');
+    
+    AHA_SlackNotify3("⚠️ *Archiving Files...*");
+    AHA_ArchiveFilesByCategory2();
+
+    AHA_DeleteUnusedTempSheets2(); 
+    AHA_SlackNotify3("✅ *Import Completed* ✅");
+
+    ScriptApp.newTrigger('AHA_NotifyCentral3')
+      .timeBased()
+      .after(60 * 1000)
+      .create();
+
+    // --- FINAL RESET ---
+    // 1. Delete the status property to signal "OFFLINE"
+    PropertiesService.getScriptProperties().deleteProperty('SYSTEM_STATUS');
+    Logger.log("SYSTEM_STATUS property deleted. Worker is now OFFLINE.");
+
+    // 2. Delete the Watchdog trigger
+    AHA_DeleteTriggers2("AHA_SystemWatchdog");
+    Logger.log("Watchdog trigger deleted. Worker process complete.");
+
+  } catch (e) {
+    AHA_SlackNotify3(`❌ *Error*: Cleanup Step 'Archiving' failed: ${e.message} <@U08TUF8LW2H>`);
+  }
+}
 
 
 

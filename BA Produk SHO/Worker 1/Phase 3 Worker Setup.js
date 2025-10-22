@@ -116,7 +116,6 @@ function doPost(e) {
     .setMimeType(ContentService.MimeType.TEXT);
 }
 
-
 function AHA_StartWorking3() {
   AHA_SetWorkerConfiguration3();
   const properties = PropertiesService.getScriptProperties();
@@ -126,6 +125,21 @@ function AHA_StartWorking3() {
   if (!category || !workerRole) {
     throw new Error("Worker category or role not found in script properties. Please run AHA_SetWorkerConfiguration3 first.");
   }
+
+  // --- NEW: Set initial status in PropertiesService ---
+  properties.setProperty('SYSTEM_STATUS', 'VALIDATING');
+  AHA_SlackNotify3("✅ Worker activated. Status: VALIDATING.");
+  
+  // --- NEW: Create the Watchdog trigger ---
+  // We first delete any old ones just in case of a previous crash.
+  AHA_DeleteTriggers2("AHA_SystemWatchdog"); 
+  ScriptApp.newTrigger("AHA_SystemWatchdog")
+    .timeBased()
+    .everyMinutes(15)
+    .create();
+  Logger.log("System Watchdog trigger created.");
+
+  // Now, start the validation process
   AHA_StartValidation2();
 }
 

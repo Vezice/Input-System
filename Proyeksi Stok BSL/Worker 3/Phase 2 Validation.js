@@ -63,7 +63,7 @@ function AHA_StartValidation2() {
     
     // Prepare the "Input" sheet for the new validation run.
     const inputSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIG.SHEET_NAMES.INPUT);
-    inputSheet.getRange("A1").setValue("VALIDATING"); // Set the master status.
+    // inputSheet.getRange("A1").setValue("VALIDATING"); // Set the master status.
     inputSheet.getRange("B5:F").clearContent(); // Clear previous results.
     inputSheet.getRange("B3").setValue(5); // Reset the row tracker.
     
@@ -404,7 +404,7 @@ function AHA_ValidationBatch2() {
         if (folder.getFiles().hasNext()) {
             AHA_StartValTrigger2(1);
         } else {
-            inputSheet.getRange("A1").setValue("SCRIPT OFFLINE");
+            // inputSheet.getRange("A1").setValue("SCRIPT OFFLINE");
             PropertiesService.getScriptProperties().deleteProperty("MOVE_FOLDER_ID");
             AHA_RemoveValTriggers2("AHA_RunValBatchSafely2");
             AHA_SlackNotify3("✅ Validation Completed. Starting Import...");
