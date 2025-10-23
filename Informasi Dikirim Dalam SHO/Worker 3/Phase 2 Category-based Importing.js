@@ -10,6 +10,7 @@
 
 /**
  * Assigns an available temporary sheet (e.g., "Temp A") to a specific category by renaming it.
+ * -- MODIFIED to check the 'TempControl' sheet for "Done" status before assigning. --
  * @param {string} categoryName The name of the category needing a sheet.
  * @returns {string} The new name of the temporary sheet.
  */
@@ -17,23 +18,44 @@ function AHA_AssignTempSheetToCategory2(categoryName) {
   const start = new Date();
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const availableTempSheets = ['Temp A', 'Temp B', 'Temp C']; // Pool of available sheets.
+    
+    // --- NEW: Read the "source of truth" for temp sheet status ---
+    const controlSheet = ss.getSheetByName("TempControl");
+    if (!controlSheet) {
+      throw new Error("❌ TempControl sheet is missing. Cannot assign temp sheets.");
+    }
+    
+    const controlData = controlSheet.getRange(2, 1, controlSheet.getLastRow() - 1, 2).getValues();
+    // Get a list of all sheets that are marked as "Done"
+    const availableTempSheets = controlData
+      .filter(row => row[1] === "Done")
+      .map(row => row[0]); // e.g., ["Temp A", "Temp C"]
 
+    if (availableTempSheets.length === 0) {
+      AHA_SlackNotify3(`⚠️ *Warning*: No 'Done' Temp sheets available. Import may be delayed. ${CONFIG.SLACK.MENTION_USER}`);
+      throw new Error("❌ No 'Done' Temp sheets are available to assign.");
+    }
+
+    // Now, check the "Done" sheets to find one that is truly available
     for (const temp of availableTempSheets) {
       const sheet = ss.getSheetByName(temp);
-      // If the sheet exists and has its original generic name, it's available.
+      
+      // We check if the sheet exists AND still has its original generic name.
+      // If it's marked "Done" but its name is already "Temp BA Produk SHO", we skip it.
       if (sheet && sheet.getName() === temp) {
         const newName = `Temp ${categoryName}`;
         sheet.clear(); // Ensure the sheet is empty before use.
         sheet.setName(newName);
-        AHA_SlackNotify3(`✅ *Completed*: Renamed and cleared ${temp} for ${newName}`);
+        
+        AHA_SlackNotify3(`✅ *Completed*: Assigned and cleared ${temp} for ${newName}`);
         Logger.log(`✅ Renamed ${temp} to ${newName}`);
-        return newName;
+        return newName; // Success!
       }
     }
-    // If the loop finishes, no sheets were available.
-    AHA_SlackNotify3(`❌ *Error*: No available Temp sheets to assign. ${CONFIG.SLACK.MENTION_USER}`);
-    throw new Error("❌ No available Temp sheets to assign.");
+    
+    // If the loop finishes, all "Done" sheets were already in use.
+    AHA_SlackNotify3(`❌ *Error*: All 'Done' Temp sheets are already in use. ${CONFIG.SLACK.MENTION_USER}`);
+    throw new Error("❌ No available 'Done' Temp sheets to assign.");
 
   } finally {
     const end = new Date();
@@ -695,11 +717,11 @@ function AHA_CreateNextTempSheet2() {
       const [name, status] = data[i];
       if (status !== "Done") {
         try {
-          // --- NEW: Use the retry helper for the critical operation ---
+          // --- THIS IS THE FAIL-SAFE RETRY BLOCK ---
           AHA_ExecuteWithRetry(() => {
             const sheet = AHA_GetOrCreateSheet2(name);
             sheet.clear(); // Ensure it's empty.
-          }, `Create/Clear Temp Sheet ${name}`, 3, 3000); // Tries up to 3 times with a 3-second delay
+          }, `Create/Clear Temp Sheet ${name}`, 3, 3000); // Tries up to 3 times
 
           // This code only runs if the retry block succeeds
           controlSheet.getRange(i + 2, 2).setValue("Done");
@@ -713,8 +735,7 @@ function AHA_CreateNextTempSheet2() {
           AHA_SlackNotify3(`❌ *Error*: Failed creating ${name} after all retries - ${err.message}! ${CONFIG.SLACK.MENTION_USER}`);
         }
 
-        // --- Rescheduling logic remains the same ---
-        // If there are more sheets to create, reschedule.
+        // --- Rescheduling logic ---
         if (i < data.length - 1) {
           AHA_DeleteTriggers2("AHA_CreateNextTempSheet2");
           ScriptApp.newTrigger("AHA_CreateNextTempSheet2")
@@ -722,7 +743,6 @@ function AHA_CreateNextTempSheet2() {
             .after(60 * 1000)
             .create();
         } else {
-          // Otherwise, the process is complete.
           AHA_DeleteTriggers2("AHA_CreateNextTempSheet2");
           Logger.log("✅ All temp sheets prepared.");
           AHA_SlackNotify3("✅ *Completed*: All temp sheets prepared!");
