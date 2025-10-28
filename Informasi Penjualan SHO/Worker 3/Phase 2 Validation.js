@@ -9,6 +9,7 @@
 const CONFIG = {
   BATCH_SIZE: 10, // The number of files to process in a single execution run to avoid timeouts.
   CATEGORY_IMPORTING_ENABLED: true, // A feature flag to enable or disable category importing.
+  FAILURE_LOG_DOC_ID: "1oiJtDXBLIFq_LEa9yypEw7R8ZBfon3mQ6L4i8EqhWDQ",
   SHEET_NAMES: { // Standardizes sheet names used throughout the script.
     INPUT: "Input",
     LOGS: "Logs",
@@ -274,7 +275,7 @@ function AHA_ValidateData2(category, data, file, detectedCategoryInfo = null) {
 /**
  * --- CORE BATCH PROCESSING ---
  * Processes a batch of files: identifies category, validates, moves, and logs results.
- * -- MODIFIED with a general retry loop for all processing errors. --
+ * -- MODIFIED to log failures to a central Google Doc. --
  */
 function AHA_ValidationBatch2() {
     const start = new Date();
@@ -314,7 +315,6 @@ function AHA_ValidationBatch2() {
             let parentFolderName = "Move";
             let processingStatus = "Not Yet Added";
 
-            // --- NEW: General retry loop for the entire process ---
             const maxRetries = 3;
             const retryDelay = 10000; // 10 seconds
 
@@ -337,8 +337,6 @@ function AHA_ValidationBatch2() {
                     }
                     
                     if (validationResult === "Not Checked") {
-                        // ... (The file conversion and category detection logic remains the same)
-                        // Note: The specific retry for Drive.Files.insert is now handled by this general loop.
                         const blob = file.getBlob();
                         const resource = { title: name, mimeType: MimeType.GOOGLE_SHEETS, parents: [{ id: moveFolderId }] };
                         const newFile = Drive.Files.insert(resource, blob, { convert: true, supportsAllDrives: true });
@@ -368,24 +366,32 @@ function AHA_ValidationBatch2() {
                         processingStatus = "Completed";
                     }
 
-                    // If we reach this point without an error, the process is successful.
-                    break; // Exit the retry loop.
+                    break; // Success! Exit the retry loop.
 
                 } catch (error) {
                     Logger.log(`Error processing file ${name} on attempt ${attempt + 1}/${maxRetries}: ${error.toString()}`);
                     
                     if (attempt < maxRetries - 1) {
-                        // If it's not the last attempt, wait before retrying.
                         Utilities.sleep(retryDelay);
                     } else {
-                        // This was the last attempt, so mark as permanently failed.
+                        // --- THIS IS THE FINAL FAILURE BLOCK ---
                         AHA_SlackNotify3(`${CONFIG.SLACK.MENTION_USER} ❌ Error processing file ${name} after ${maxRetries} attempts: ${error.toString()}`);
                         processingStatus = "Failed"; 
                         validationResult = "Process Error";
                         parentFolderName = AHA_MoveFile2(file, "Failed", category, null);
+
+                        // --- NEW LINE: Log this failure to the Google Doc ---
+                        const workerName = PropertiesService.getScriptProperties().getProperty("WORKER_COUNT") || "Unknown Worker";
+                        AHA_LogFailureToDoc(name, `Process Error: ${error.message}`, category, workerName);
                     }
                 }
             } // --- End of retry loop ---
+
+            // --- ALSO LOG "WRONG DATA" FAILURES ---
+            if (validationResult === "Wrong Data") {
+                 const workerName = PropertiesService.getScriptProperties().getProperty("WORKER_COUNT") || "Unknown Worker";
+                 AHA_LogFailureToDoc(name, validationResult, category, workerName);
+            }
 
             const lower = name.toLowerCase();
             if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
@@ -404,7 +410,6 @@ function AHA_ValidationBatch2() {
         if (folder.getFiles().hasNext()) {
             AHA_StartValTrigger2(1);
         } else {
-            // inputSheet.getRange("A1").setValue("SCRIPT OFFLINE");
             PropertiesService.getScriptProperties().deleteProperty("MOVE_FOLDER_ID");
             AHA_RemoveValTriggers2("AHA_RunValBatchSafely2");
             AHA_SlackNotify3("✅ Validation Completed. Starting Import...");
@@ -711,7 +716,38 @@ function AHA_ValidateBrandCodeFromSheet(brandCode, category) {
   }
 }
 
+/**
+ * Appends a new failure log entry to the central Google Doc.
+ * This function is designed to be fail-safe with retries.
+ *
+ * @param {string} fileName The name of the file that failed.
+ * @param {string} reason The reason for the failure (e.g., "Wrong Data", "Process Error").
+ * @param {string} category The category that was processing the file.
+ * @param {string} workerName The name of the worker (e.g., "Worker 1").
+ */
+function AHA_LogFailureToDoc(fileName, reason, category, workerName) {
+  try {
+    if (!CONFIG.FAILURE_LOG_DOC_ID) {
+      Logger.log("FAILURE_LOG_DOC_ID not set in CONFIG. Skipping log.");
+      return;
+    }
 
+    // Format: ISO 8601 Date | File Name | Reason | Worker Info
+    const timestamp = new Date().toISOString();
+    const workerInfo = `${category} - ${workerName}`;
+    const logLine = `[${timestamp}] | ${fileName} | ${reason} | ${workerInfo}\n`;
+
+    AHA_ExecuteWithRetry(() => {
+      const doc = DocumentApp.openById(CONFIG.FAILURE_LOG_DOC_ID);
+      const body = doc.getBody();
+      body.appendParagraph(logLine);
+    }, 'LogFailureToDoc', 3, 2000); // Retry 3 times
+
+  } catch (err) {
+    Logger.log(`CRITICAL: Failed to write to Failure Log Doc after all retries: ${err.message}`);
+    AHA_SlackNotify3(`❌ CRITICAL: Failed to write to Failure Log Doc for file ${fileName}. ${CONFIG.SLACK.MENTION_USER}`);
+  }
+}
 
 
 

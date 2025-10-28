@@ -596,49 +596,117 @@ function AHA_DeleteTriggerByName3(triggerFunctionName) {
 }
 
 /**
- * Checks a central 'Failed' folder for any files and reports them.
+ * Checks the central 'Failed' folder, reads the 'FAILURE_LOG' Google Doc,
+ * and sends a smart, cross-referenced report to Slack.
  */
 function AHA_CheckFailedImports3() {
+  // --- CONFIGURATION ---
+  // This must be the SAME ID you put in the Worker's CONFIG.
+  const FAILURE_LOG_DOC_ID = "YOUR_NEW_GOOGLE_DOC_ID_GOES_HERE";
+  // ---
+  
   try {
-    const moveFolderId = '1zQEPDi4dI3gUJiEKYp-GQI8lfNFwL1sh';
+    const moveFolderId = '1zQEPDi4dI3gUJiEKYp-GQI8lfNFwL1sh'; // Base 'Move'
     const moveFolder = DriveApp.getFolderById(moveFolderId);
-    if (!moveFolder) {
-      Logger.log(`Error: Base 'Move' folder not found.`);
-      AHA_SlackNotify3(`❌ *Error*: Base 'Move' folder not found by ID: ${moveFolderId}. <@U08TUF8LW2H>`);
-      return;
-    }
     const parents = moveFolder.getParents();
     if (!parents.hasNext()) {
-        Logger.log(`Error: 'Move' folder has no parent. Cannot find 'Failed' folder.`);
-        AHA_SlackNotify3(`❌ *Error*: The 'Move' folder does not have a parent folder. Cannot find the 'Failed' folder. <@U08TUF8LW2H>`);
-        return;
+        throw new Error(`The 'Move' folder does not have a parent folder.`);
     }
     const rootFolder = parents.next();
     const failedFolders = rootFolder.getFoldersByName('Failed');
+
     if (!failedFolders.hasNext()) {
-      Logger.log(`No central 'Failed' folder found. Nothing to report.`);
       AHA_SlackNotify3(`✅ No central 'Failed' folder was found. Nothing to report.`);
       return;
     }
+
     const failedFolder = failedFolders.next();
     const files = failedFolder.getFiles();
-    const fileNames = [];
+    const filesInFolder = new Map();
     while (files.hasNext()) {
-      fileNames.push(files.next().getName());
+      const file = files.next();
+      filesInFolder.set(file.getName(), file.getDateCreated());
     }
-    if (fileNames.length > 0) {
-      const fileList = fileNames.join('\n• ');
-      const message = `🚨 *Failed Imports Found!* ${fileNames.length} file(s) in the 'Failed' folder:\n• ${fileList}`;
-      Logger.log(message);
-      AHA_SlackNotify3(message);
-    } else {
-      Logger.log(`The central 'Failed' folder is empty.`);
+
+    if (filesInFolder.size === 0) {
       AHA_SlackNotify3(`✅ The central 'Failed' folder is empty. All good!`);
+      return;
     }
+
+    // --- NEW LOGIC: Read and Parse the Google Doc ---
+    const failureLog = new Map();
+    try {
+      const doc = DocumentApp.openById(FAILURE_LOG_DOC_ID);
+      const logText = doc.getBody().getText();
+      const logLines = logText.split('\n').filter(Boolean); // Split by line, remove blanks
+      
+      for (const line of logLines) {
+        const parts = line.split(' | ');
+        if (parts.length < 4) continue; // Skip malformed lines
+
+        const dateStr = parts[0].replace('[', '').replace(']', '');
+        const fileName = parts[1].trim();
+        const reason = parts[2].trim();
+        const workerInfo = parts[3].trim();
+        const logDate = new Date(dateStr);
+
+        // Check if this file is one of the ones *currently* in the folder
+        if (filesInFolder.has(fileName)) {
+          const existingEntry = failureLog.get(fileName);
+          // Only store the MOST RECENT log entry for this file
+          if (!existingEntry || logDate > existingEntry.date) {
+            failureLog.set(fileName, {
+              date: logDate,
+              reason: reason,
+              worker: workerInfo
+            });
+          }
+        }
+      }
+    } catch (docErr) {
+      AHA_SlackNotify3(`❌ *Error*: Could not read the Failure Log Doc: ${docErr.message} ${CONFIG.SLACK.MENTION_USER}`);
+      // Continue without log data if it fails
+    }
+
+    // --- Build the Smart Slack Message ---
+    let message = `🚨 *Failed Imports Report!* ${filesInFolder.size} file(s) are in the 'Failed' folder:\n\n`;
+    const filesWithLogs = [];
+    const filesWithoutLogs = [];
+
+    for (const [fileName, dateCreated] of filesInFolder.entries()) {
+      const logEntry = failureLog.get(fileName);
+      if (logEntry) {
+        // We found a matching log entry
+        filesWithLogs.push(
+          `• *${fileName}*` +
+          `\n   *Reason:* ${logEntry.reason}` +
+          `\n   *Source:* ${logEntry.worker}` +
+          `\n   *(Logged: ${logEntry.date.toLocaleString()})*`
+        );
+      } else {
+        // No log found for this file. It was likely moved manually.
+        filesWithoutLogs.push(
+          `• *${fileName}*` +
+          `\n   *(No failure log found. Added to folder: ${dateCreated.toLocaleString()})*`
+        );
+      }
+    }
+
+    if (filesWithLogs.length > 0) {
+      message += "--- *Files with Logged Reason* ---\n" + filesWithLogs.join("\n");
+    }
+    if (filesWithoutLogs.length > 0) {
+      message += "\n\n--- *Files with No Log* (Manual/Old) ---\n" + filesWithoutLogs.join("\n");
+    }
+
+    AHA_SlackNotify3(message);
+
   } catch (e) {
     Logger.log(`Fatal Error in AHA_CheckFailedImports: ${e.message}`);
     AHA_SlackNotify3(`❌ *Fatal Error* in CheckFailedImports: ${e.message} <@U08TUF8LW2H>`);
   }
+  
+  // This function should still run at the end
   AHA_FreezeImportStatus3();
 }
 
