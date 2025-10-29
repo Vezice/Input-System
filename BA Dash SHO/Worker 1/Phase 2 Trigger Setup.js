@@ -104,7 +104,7 @@ function AHA_CheckForTrigger(functionName) {
 function AHA_SystemWatchdog() {
   const properties = PropertiesService.getScriptProperties();
   const status = properties.getProperty('SYSTEM_STATUS');
-  const STALENESS_LIMIT_MS = 30 * 60 * 1000; // 30 minutes
+  const STALENESS_LIMIT_MS = 10 * 60 * 1000; // 10 minutes
   const MAX_RESTARTS = 3; 
 
   if (!status) { 
@@ -125,7 +125,7 @@ function AHA_SystemWatchdog() {
 
       if (restartCount >= MAX_RESTARTS) {
         // --- QUARANTINE ---
-        Logger.log(`CRITICAL: VALIDATING stage has been stale for 30+ minutes and failed ${restartCount} restarts. Triggering quarantine.`);
+        Logger.log(`CRITICAL: VALIDATING stage has been stale for 10+ minutes and failed ${restartCount} restarts. Triggering quarantine.`);
         AHA_SlackNotify3(`🚨 *CRITICAL FAILURE*: System is STALE. Restart attempts failed. Triggering "Poison Pill" Quarantine. <@U08TUF8LW2H>`);
         AHA_QuarantinePoisonPill(); // This is the function from our previous discussion
         AHA_StartValTrigger2(1);    // Restart *after* quarantining
@@ -178,12 +178,59 @@ function AHA_SystemWatchdog() {
        AHA_SlackNotify3(`⚠️ *Watchdog Alert*: System was stuck in ${status}. Restarting failed step.`);
        ScriptApp.newTrigger(handlerFunction)
          .timeBased()
-         .after(30 * 1000) 
+         .after(10 * 1000) 
          .create();
     }
   }
 }
 
+/**
+ * --- NEW: POISON PILL HANDLER ---
+ * This function is called by the Watchdog when it detects a persistent crash loop.
+ * It finds the "Move" folder, quarantines the *first file* in the list, logs it,
+ * and then allows the Watchdog to restart the process.
+ */
+function AHA_QuarantinePoisonPill() {
+  try {
+    const properties = PropertiesService.getScriptProperties();
+    const moveFolderId = properties.getProperty("MOVE_FOLDER_ID");
+    if (!moveFolderId) {
+      Logger.log("Quarantine skipped: No MOVE_FOLDER_ID found in properties.");
+      return;
+    }
+    
+    const folder = DriveApp.getFolderById(moveFolderId);
+    const files = folder.getFiles();
+
+    if (files.hasNext()) {
+      const poisonFile = files.next();
+      const fileName = poisonFile.getName();
+
+      // 1. Move the file to the Failed folder
+      const parentFolder = DriveApp.getFolderById(CONFIG.FOLDER_IDS.ROOT_SHARED_DRIVE);
+      const failedFolder = AHA_GetSubFolder2(parentFolder, "Failed");
+      poisonFile.moveTo(failedFolder);
+
+      // 2. Log this action to the Google Doc
+      const workerName = properties.getProperty("WORKER_COUNT") || "System Watchdog";
+      const category = properties.getProperty("WORKER_CATEGORY") || "Unknown";
+      AHA_LogFailureToDoc(fileName, "Poison Pill Quarantine (Auto-Removed by Watchdog)", category, workerName);
+
+      // 3. Send a critical alert
+      AHA_SlackNotify3(`🚨 *POISON PILL QUARANTINED*: The file *${fileName}* was causing a persistent crash loop and has been moved to the Failed folder. The system will now retry. <@U08TUF8LW2H>`);
+      Logger.log(`🚨 QUARANTINED: ${fileName}`);
+
+      // 4. Reset the restart counter so the system can try again
+      properties.deleteProperty("RESTART_COUNT_VALIDATING");
+
+    } else {
+      Logger.log("Watchdog triggered quarantine, but no files were found in the Move folder.");
+    }
+  } catch (err) {
+    Logger.log(`CRITICAL ERROR in AHA_QuarantinePoisonPill: ${err.message}`);
+    AHA_SlackNotify3(`❌ *CRITICAL FAILURE* in Watchdog's quarantine function: ${err.message} <@U08TUF8LW2H>`);
+  }
+}
 
 /**
  * --- SAFE BATCH RUNNER (MODIFIED) ---
