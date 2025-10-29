@@ -313,6 +313,9 @@ function AHA_ImportCategoryBatchInBatches2() {
             AHA_SlackNotify3("✅ *Process Complete*: All actionable files have been imported or marked as failed!");
             AHA_FinalizeAllTempSheets2();
         }
+
+        PropertiesService.getScriptProperties().setProperty("LAST_IMPORT_HEARTBEAT", new Date().getTime());
+
     } finally {
         const end = new Date();
         AHA_LogRuntime3(end - start);

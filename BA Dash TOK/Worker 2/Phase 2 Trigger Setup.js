@@ -61,12 +61,15 @@ function AHA_InstallTrigger2() {
 }
 
 
-
 function AHA_StartImport2() {
   const start = new Date();
   try {
-    // --- MODIFICATION ---
+    PropertiesService.getScriptProperties().deleteProperty("RESTART_COUNT_VALIDATING");
     PropertiesService.getScriptProperties().setProperty('SYSTEM_STATUS', 'IMPORTING');
+    
+    // --- NEW: Set the initial import heartbeat ---
+    PropertiesService.getScriptProperties().setProperty("LAST_IMPORT_HEARTBEAT", new Date().getTime());
+    
     AHA_SlackNotify3("⚠️ *Starting Import...* Status: IMPORTING");
     
     AHA_InstallTrigger2();
@@ -77,7 +80,6 @@ function AHA_StartImport2() {
     AHA_LogRuntime3(end - start);
   }
 }
-
 
 /**
  * A helper function to check if a trigger for a specific function exists.
@@ -94,42 +96,86 @@ function AHA_CheckForTrigger(functionName) {
   }
 }
 
+/**
+ * --- WATCHDOG FUNCTION (UPGRADED WITH "STALENESS" CHECK) ---
+ * Runs on a schedule to check if the system is stuck (stale).
+ * A "stale" process is one that has not updated its "heartbeat" timestamp.
+ */
 function AHA_SystemWatchdog() {
-  // --- MODIFICATION ---
-  const status = PropertiesService.getScriptProperties().getProperty('SYSTEM_STATUS');
+  const properties = PropertiesService.getScriptProperties();
+  const status = properties.getProperty('SYSTEM_STATUS');
+  const STALENESS_LIMIT_MS = 30 * 60 * 1000; // 30 minutes
+  const MAX_RESTARTS = 3; 
 
-  if (!status) { // If status is null or deleted, worker is OFFLINE
-    Logger.log("Watchdog: System is OFFLINE. No action needed.");
-    // In this new design, the watchdog should also delete itself if it finds it's
-    // running while the system is offline (e.g., after a manual stop).
+  if (!status) { 
+    Logger.log("Watchdog: System is OFFLINE. Deleting self.");
     AHA_DeleteTriggers2("AHA_SystemWatchdog");
     return;
   }
   
+  // --- VALIDATING STAGE CHECK ---
   if (status === "VALIDATING") {
-    if (!AHA_CheckForTrigger("AHA_RunValBatchSafely2")) {
-      AHA_SlackNotify3("⚠️ *Watchdog Alert*: System was stuck in VALIDATING. Restarting validation trigger. <@U08TUF8LW2H>");
-      AHA_StartValTrigger2(1);
+    const lastHeartbeat = Number(properties.getProperty("LAST_VALIDATION_HEARTBEAT") || 0);
+    const now = new Date().getTime();
+
+    // Check if the last heartbeat is older than the staleness limit
+    if (lastHeartbeat === 0 || (now - lastHeartbeat) > STALENESS_LIMIT_MS) {
+      // The system is STALE (crashed or stuck). Time to act.
+      const restartCount = Number(properties.getProperty("RESTART_COUNT_VALIDATING") || 0);
+
+      if (restartCount >= MAX_RESTARTS) {
+        // --- QUARANTINE ---
+        Logger.log(`CRITICAL: VALIDATING stage has been stale for 30+ minutes and failed ${restartCount} restarts. Triggering quarantine.`);
+        AHA_SlackNotify3(`🚨 *CRITICAL FAILURE*: System is STALE. Restart attempts failed. Triggering "Poison Pill" Quarantine. <@U08TUF8LW2H>`);
+        AHA_QuarantinePoisonPill(); // This is the function from our previous discussion
+        AHA_StartValTrigger2(1);    // Restart *after* quarantining
+      } else {
+        // --- RESTART ---
+        const newCount = restartCount + 1;
+        properties.setProperty("RESTART_COUNT_VALIDATING", newCount);
+        // Force-delete any lingering triggers, just in case
+        AHA_DeleteTriggers2("AHA_RunValBatchSafely2");
+        AHA_SlackNotify3(`⚠️ *Watchdog Alert*: System is STALE (no heartbeat in 30 min). Restarting... (Attempt ${newCount}/${MAX_RESTARTS})`);
+        AHA_StartValTrigger2(1); // Restart the process
+      }
+    } else {
+      // System is NOT stale. It's actively working. Do nothing.
+      Logger.log("Watchdog: System is VALIDATING and heartbeat is current. All good.");
     }
   }
 
+  // --- IMPORTING STAGE CHECK ---
   if (status === "IMPORTING") {
-    if (!AHA_CheckForTrigger("AHA_RunImportBatchSafely2")) {
-      AHA_SlackNotify3("⚠️ *Watchdog Alert*: System was stuck in IMPORTING. Restarting import trigger. <@U08TUF8LW2H>");
-      AHA_InstallTrigger2();
+    const lastHeartbeat = Number(properties.getProperty("LAST_IMPORT_HEARTBEAT") || 0);
+    const now = new Date().getTime();
+
+    if (lastHeartbeat === 0 || (now - lastHeartbeat) > STALENESS_LIMIT_MS) {
+      const restartCount = Number(properties.getProperty("RESTART_COUNT_IMPORTING") || 0);
+      if (restartCount >= MAX_RESTARTS) {
+        AHA_SlackNotify3(`🚨 *CRITICAL FAILURE*: IMPORTING process is STALE and failed ${restartCount} restarts. Shutting down. <@U08TUF8LW2H>`);
+        AHA_RunArchiving(); // Shut down
+      } else {
+        const newCount = restartCount + 1;
+        properties.setProperty("RESTART_COUNT_IMPORTING", newCount);
+        AHA_DeleteTriggers2("AHA_RunImportBatchSafely2");
+        AHA_SlackNotify3(`⚠️ *Watchdog Alert*: IMPORTING is STALE (no heartbeat in 30 min). Restarting... (Attempt ${newCount}/${MAX_RESTARTS})`);
+        AHA_InstallTrigger2(); // Restart the process
+      }
+    } else {
+       Logger.log("Watchdog: System is IMPORTING and heartbeat is current. All good.");
     }
   }
-
+  
+  // --- CLEANUP STAGE CHECK (no heartbeat needed, just check for triggers) ---
   const cleanupStatuses = ["FINALIZING", "ARCHIVING", "CLEANUP"];
   if (cleanupStatuses.includes(status)) {
     let handlerFunction = "";
     if (status === "FINALIZING") handlerFunction = "AHA_RunFinalization";
     if (status === "ARCHIVING") handlerFunction = "AHA_RunArchiving";
-    // Note: 'CLEANUP' is so fast, we just let it restart at 'ARCHIVING'
-    if (status === "CLEANUP") handlerFunction = "AHA_RunArchiving";
+    if (status === "CLEANUP") handlerFunction = "AHA_RunArchiving"; 
 
     if (handlerFunction && !AHA_CheckForTrigger(handlerFunction)) {
-       AHA_SlackNotify3(`⚠️ *Watchdog Alert*: System was stuck in ${status}. Restarting failed step. <@U08TUF8LW2H>`);
+       AHA_SlackNotify3(`⚠️ *Watchdog Alert*: System was stuck in ${status}. Restarting failed step.`);
        ScriptApp.newTrigger(handlerFunction)
          .timeBased()
          .after(30 * 1000) 

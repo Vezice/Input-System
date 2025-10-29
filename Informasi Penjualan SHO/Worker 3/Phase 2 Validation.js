@@ -415,6 +415,9 @@ function AHA_ValidationBatch2() {
             AHA_SlackNotify3("✅ Validation Completed. Starting Import...");
             AHA_StartImport2();
         }
+
+        PropertiesService.getScriptProperties().setProperty("LAST_VALIDATION_HEARTBEAT", new Date().getTime());
+
     } finally {
         const end = new Date();
         AHA_LogRuntime3(end - start);
