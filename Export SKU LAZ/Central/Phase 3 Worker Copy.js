@@ -631,6 +631,7 @@ function AHA_CheckFailedImports3() {
   // --- CONFIGURATION ---
   // This must be the SAME ID you put in the Worker's CONFIG.
   const FAILURE_LOG_DOC_ID = "1oiJtDXBLIFq_LEa9yypEw7R8ZBfon3mQ6L4i8EqhWDQ";
+  const MENTION_USER_ON_ERROR = "<@U08TUF8LW2H>"; // <-- FIX: Hardcode the user ID here
   // ---
   
   try {
@@ -692,7 +693,8 @@ function AHA_CheckFailedImports3() {
         }
       }
     } catch (docErr) {
-      AHA_SlackNotify3(`❌ *Error*: Could not read the Failure Log Doc: ${docErr.message} ${CONFIG.SLACK.MENTION_USER}`);
+      // --- FIX: Use the new hardcoded variable ---
+      AHA_SlackNotify3(`❌ *Error*: Could not read the Failure Log Doc: ${docErr.message} ${MENTION_USER_ON_ERROR}`);
       // Continue without log data if it fails
     }
 
@@ -731,7 +733,8 @@ function AHA_CheckFailedImports3() {
 
   } catch (e) {
     Logger.log(`Fatal Error in AHA_CheckFailedImports: ${e.message}`);
-    AHA_SlackNotify3(`❌ *Fatal Error* in CheckFailedImports: ${e.message} <@U08TUF8LW2H>`);
+    // --- FIX: Use the new hardcoded variable ---
+    AHA_SlackNotify3(`❌ *Fatal Error* in CheckFailedImports: ${e.message} ${MENTION_USER_ON_ERROR}`);
   }
   
   // This function should still run at the end
