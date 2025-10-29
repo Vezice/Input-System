@@ -602,7 +602,7 @@ function AHA_DeleteTriggerByName3(triggerFunctionName) {
 function AHA_CheckFailedImports3() {
   // --- CONFIGURATION ---
   // This must be the SAME ID you put in the Worker's CONFIG.
-  const FAILURE_LOG_DOC_ID = "YOUR_NEW_GOOGLE_DOC_ID_GOES_HERE";
+  const FAILURE_LOG_DOC_ID = "1oiJtDXBLIFq_LEa9yypEw7R8ZBfon3mQ6L4i8EqhWDQ";
   // ---
   
   try {
