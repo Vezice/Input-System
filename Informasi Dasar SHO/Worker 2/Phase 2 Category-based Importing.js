@@ -528,11 +528,65 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
 }
 
 function AHA_ProcessBADashTIKFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap) {
-  return AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap);
+  try {
+    // This function now uses column mapping on a single row
+    const startDataRow = dataRowIndex - 1;
+    if (startDataRow >= data.length) return false;
+
+    const sourceRow = data[startDataRow];
+    // Check if the single row has any real data
+    if (!sourceRow || !sourceRow.some(cell => (cell || "").toString().trim() !== "")) return false;
+    
+    const standardColumnCount = targetSheet.getLastColumn() - 1; // Exclude 'Akun'
+    const transformedRow = new Array(standardColumnCount).fill('');
+
+    for (let i = 0; i < columnMap.length; i++) {
+        const destIndex = columnMap[i];
+        if (destIndex !== -1 && i < sourceRow.length) {
+            transformedRow[destIndex] = sourceRow[i];
+        }
+    }
+
+    const targetRow = targetSheet.getLastRow() + 1;
+    targetSheet.getRange(targetRow, 1).setValue(folderName);
+    targetSheet.getRange(targetRow, 2, 1, transformedRow.length).setValues([transformedRow]);
+    return true;
+
+  } catch (err) {
+    Logger.log(`Error processing BA Dash TIK file: ${err.message}`);
+    return false;
+  }
 }
 
 function AHA_ProcessBADashTOKFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap) {
-  return AHA_ProcessGenericFile(data, targetSheet, logSheet, folderName, dataRowIndex, columnMap);
+  try {
+    // This function now uses column mapping on a single row
+    const startDataRow = dataRowIndex - 1;
+    if (startDataRow >= data.length) return false;
+
+    const sourceRow = data[startDataRow];
+    // Check if the single row has any real data
+    if (!sourceRow || !sourceRow.some(cell => (cell || "").toString().trim() !== "")) return false;
+    
+    const standardColumnCount = targetSheet.getLastColumn() - 1; // Exclude 'Akun'
+    const transformedRow = new Array(standardColumnCount).fill('');
+
+    for (let i = 0; i < columnMap.length; i++) {
+        const destIndex = columnMap[i];
+        if (destIndex !== -1 && i < sourceRow.length) {
+            transformedRow[destIndex] = sourceRow[i];
+        }
+    }
+
+    const targetRow = targetSheet.getLastRow() + 1;
+    targetSheet.getRange(targetRow, 1).setValue(folderName);
+    targetSheet.getRange(targetRow, 2, 1, transformedRow.length).setValues([transformedRow]);
+    return true;
+
+  } catch (err) {
+    Logger.log(`Error processing BA Dash TOK file: ${err.message}`);
+    return false;
+  }
 }
 
 /**
