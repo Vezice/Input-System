@@ -47,7 +47,8 @@ function AHA_StartWorkers3() {
 
 /**
  * Splits files from the 'Upload Here' folder into worker folders.
- * It now returns a boolean indicating if any files were processed.
+ * -- MODIFIED with a 5-attempt retry loop to handle leftover files. --
+ *
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss The active spreadsheet object.
  * @param {string} category The target category to process.
  * @returns {boolean} Returns true if files were found and split, otherwise false.
@@ -84,50 +85,85 @@ function AHA_SplitFilesToWorkers3(ss, category) {
     workerFolders[i] = matches.hasNext() ? matches.next() : baseFolder.createFolder(folderName);
   }
 
-  const files = [];
-  const fileIterator = uploadHere.getFiles();
-  while (fileIterator.hasNext()) {
-    files.push(fileIterator.next());
-  }
+  // --- NEW RETRY LOOP LOGIC ---
+  let totalFilesMoved = 0;
+  let attempt = 0;
+  const maxAttempts = 5; // Safety break to prevent infinite loops
+  let filesWereFoundAtStart = false; // Flag to track if we ever found files
 
-  const totalFiles = files.length;
-  
-  // --- KEY CHANGE 3: Check for files and exit early if none are found ---
-  if (totalFiles === 0) {
-    Logger.log("⚠️ No files found in Upload Here folder. Halting run.");
-    AHA_SlackNotify3(`⚠️ No files found in 'Upload Here' for *${category}*. The process will now stop.`);
-    updateSheet.getRange("A1").setValue("SCRIPT OFFLINE"); // Set final status
-    return false; // Signal that no files were processed.
-  }
-  
-  Logger.log(`🔍 Found ${totalFiles} files in Upload Here for category ${category}`);
-
-  files.sort((a, b) => a.getName().localeCompare(b.getName(), undefined, { numeric: true, sensitivity: 'base' }));
-
-  const movedCounts = Array(numWorkers).fill(0);
-  const filesPerWorker = Math.ceil(totalFiles / numWorkers);
-
-  files.forEach((file, i) => {
-    const targetWorkerIndex = Math.floor(i / filesPerWorker) + 1;
-    try {
-      file.moveTo(workerFolders[targetWorkerIndex]);
-      movedCounts[targetWorkerIndex - 1]++;
-    } catch (e) {
-      Logger.log(`❌ Could not move "${file.getName()}" to Worker ${targetWorkerIndex}: ${e.message}`);
-      AHA_SlackNotify3(`❌ Error moving "${file.getName()}" to Worker ${targetWorkerIndex}: ${e.message} <@U08TUF8LW2H>`);
+  while (attempt < maxAttempts) {
+    attempt++;
+    const files = [];
+    const fileIterator = uploadHere.getFiles();
+    while (fileIterator.hasNext()) {
+      files.push(fileIterator.next());
     }
-  });
 
-  const movedTotal = movedCounts.reduce((a, b) => a + b, 0);
-  const summary = `✅ [${category}] Split ${movedTotal} files → W1: ${movedCounts[0]}, W2: ${movedCounts[1]}, W3: ${movedCounts[2]}`;
-  Logger.log(summary);
-  AHA_SlackNotify3(summary);
+    const totalFiles = files.length;
 
-  if (uploadHere.getFiles().hasNext()) {
-    AHA_SlackNotify3(`⚠️ [${category}] Some files were not moved from Upload Here!`);
+    if (totalFiles === 0) {
+      if (attempt === 1 && !filesWereFoundAtStart) {
+        // This is the first run, and no files were found. This is a normal "no files" run.
+        Logger.log("⚠️ No files found in Upload Here folder. Halting run.");
+        AHA_SlackNotify3(`⚠️ No files found in 'Upload Here' for *${category}*. The process will now stop.`);
+        updateSheet.getRange("A1").setValue("SCRIPT OFFLINE");
+        return false; // Signal that no files were processed.
+      } else {
+        // Files were found on a previous loop, and now the folder is empty.
+        Logger.log(`✅ All files successfully moved from Upload Here after ${attempt - 1} attempts.`);
+        break; // Exit the while loop, success.
+      }
+    }
+    
+    // If we found files, set the flag so we know this was a "real" run
+    filesWereFoundAtStart = true; 
+
+    Logger.log(`🔍 [Attempt ${attempt}/${maxAttempts}] Found ${totalFiles} files. Moving them...`);
+
+    files.sort((a, b) => a.getName().localeCompare(b.getName(), undefined, { numeric: true, sensitivity: 'base' }));
+
+    const movedCounts = Array(numWorkers).fill(0);
+    const filesPerWorker = Math.ceil(totalFiles / numWorkers);
+
+    files.forEach((file, i) => {
+      const targetWorkerIndex = Math.floor(i / filesPerWorker) + 1;
+      try {
+        file.moveTo(workerFolders[targetWorkerIndex]);
+        movedCounts[targetWorkerIndex - 1]++;
+      } catch (e) {
+        Logger.log(`❌ Could not move "${file.getName()}" to Worker ${targetWorkerIndex}: ${e.message}`);
+        AHA_SlackNotify3(`❌ Error moving "${file.getName()}" to Worker ${targetWorkerIndex}: ${e.message} <@U08TUF8LW2H>`);
+      }
+    });
+
+    const movedThisAttempt = movedCounts.reduce((a, b) => a + b, 0);
+    totalFilesMoved += movedThisAttempt;
+    
+    const summary = `✅ [Attempt ${attempt}] Split ${movedThisAttempt} files → W1: ${movedCounts[0]}, W2: ${movedCounts[1]}, W3: ${movedCounts[2]}`;
+    Logger.log(summary);
+    AHA_SlackNotify3(summary);
+
+    // After moving, check if any files are left.
+    // If not, the next loop iteration will find totalFiles = 0 and break.
+    if (!uploadHere.getFiles().hasNext()) {
+        Logger.log("✅ 'Upload Here' folder is now empty. Proceeding.");
+        break; // Success, exit loop
+    } else {
+        Logger.log(`⚠️ Files are still present in 'Upload Here'. Waiting 30s and retrying...`);
+        Utilities.sleep(30 * 1000); // Wait 30 seconds for Drive to catch up before next attempt
+    }
+  } // --- End of while loop ---
+
+  // Check if the loop ended because it's still not empty
+  if (attempt >= maxAttempts && uploadHere.getFiles().hasNext()) {
+    Logger.log(`❌ FAILED: Files are still in 'Upload Here' after ${maxAttempts} attempts. Stopping process.`);
+    AHA_SlackNotify3(`❌ *CRITICAL*: Files are still stuck in 'Upload Here' for *${category}* after ${maxAttempts} attempts. Manual check needed. <@U08TUF8LW2H>`);
+    return false; // Return false because the split failed
   }
   
-  return true; // Signal that files were successfully processed.
+  // If we are here, it means the loop broke successfully.
+  // We return true *only* if we actually found and moved files.
+  return filesWereFoundAtStart;
 }
 
 

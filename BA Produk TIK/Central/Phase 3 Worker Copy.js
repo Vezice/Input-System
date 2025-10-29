@@ -266,7 +266,9 @@ function AHA_HandleWorkerNotification(e) {
 
 
 /**
- * Handles the initial Slack command, logs it, acknowledges it, and starts the workers.
+ * Handles the initial Slack command, logs it, acknowledges it, and
+ * -- MODIFIED: Creates a 5-minute trigger to start the workers --
+ *
  * @param {Object} e The event parameter from the doPost request, containing Slack data.
  */
 function AHA_HandleSlackCommand(e) {
@@ -298,26 +300,52 @@ function AHA_HandleSlackCommand(e) {
       sheet.appendRow(logData);
 
     } else {
-      // Log a warning if the sheet doesn't exist, but don't stop the script.
       Logger.log(`Warning: Log sheet named "${logSheetName}" was not found.`);
     }
   } catch (logError) {
-    // Log any errors during the sheet writing process but continue execution.
     Logger.log(`Error while trying to log command: ${logError.message}`);
   }
 
   // --- 2. Acknowledge the command in the Slack channel ---
-  // This lets the user know their command was received before the main work begins.
-  const ackText = `👀 Processing your request, ${user}...`;
+  // --- MODIFICATION: Updated the text to include the 5-minute wait ---
+  const ackText = `👀 Processing your request, ${user}... *Adding a 5-minute delay* to allow Google Drive to sync. File processing will begin shortly.`;
   const slackPayload = {
     method: "post",
     contentType: "application/json",
     payload: JSON.stringify({ text: ackText })
   };
   UrlFetchApp.fetch(e.parameter.response_url, slackPayload);
+  // --- END MODIFICATION ---
 
-  // --- 3. Start the main worker process ---
-  AHA_StartWorkers3();
+
+  // --- 3. Start the main worker process via a trigger ---
+  // --- MODIFICATION: Replaced direct call with a one-time trigger ---
+  Logger.log("Creating 5-minute trigger for AHA_TriggeredStartWorkers");
+  
+  // Delete any old triggers first to be safe
+  AHA_DeleteTriggerByName3('AHA_TriggeredStartWorkers'); 
+  
+  ScriptApp.newTrigger('AHA_TriggeredStartWorkers')
+    .timeBased()
+    .after(5 * 60 * 1000) // 5 minutes
+    .create();
+  // --- END MODIFICATION ---
+}
+
+/**
+ * --- NEW FUNCTION ---
+ * This function is called by the 5-minute one-time trigger
+ * created by AHA_HandleSlackCommand. Its only job is to
+ * start the main worker process.
+ */
+function AHA_TriggeredStartWorkers() {
+  try {
+    Logger.log("5-minute delay complete. Calling AHA_StartWorkers3...");
+    AHA_StartWorkers3(); // This is the original function
+  } catch(e) {
+    Logger.log(`❌ Error in AHA_TriggeredStartWorkers: ${e.message}`);
+    AHA_SlackNotify3(`❌ *Fatal Error*: The 5-minute trigger failed to start the workers: ${e.message} <@U08TUF8LW2H>`);
+  }
 }
 
 
