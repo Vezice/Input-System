@@ -117,6 +117,12 @@ function doPost(e) {
 }
 
 function AHA_StartWorking3() {
+  // --- NEW: MASTER RESET ---
+  // Run this first to ensure a clean slate and prevent the "too many triggers" error.
+  // This deletes all "zombie" triggers left from any previous crash.
+  AHA_DeleteAllTimeBasedTriggers();
+  // --- END NEW ---
+
   AHA_SetWorkerConfiguration3();
   const properties = PropertiesService.getScriptProperties();
   const category = properties.getProperty("WORKER_CATEGORY");
@@ -128,12 +134,11 @@ function AHA_StartWorking3() {
 
   properties.setProperty('SYSTEM_STATUS', 'VALIDATING');
   
-  // --- NEW: Set the initial heartbeat ---
   properties.setProperty("LAST_VALIDATION_HEARTBEAT", new Date().getTime());
   
   AHA_SlackNotify3("✅ Worker activated. Status: VALIDATING.");
   
-  AHA_DeleteTriggers2("AHA_SystemWatchdog"); 
+  // This line (109) will now succeed because the slots are free.
   ScriptApp.newTrigger("AHA_SystemWatchdog")
     .timeBased()
     .everyMinutes(15)

@@ -376,7 +376,33 @@ function AHA_RunArchiving() {
   }
 }
 
-
+/**
+ * --- MASTER RESET FOR TRIGGERS ---
+ * Deletes ALL programmatic time-based triggers for this script.
+ * This is a "clean slate" function to prevent "too many triggers" errors
+ * from "zombie" triggers left over after a crash.
+ */
+function AHA_DeleteAllTimeBasedTriggers() {
+  let deletedCount = 0;
+  try {
+    const allTriggers = ScriptApp.getProjectTriggers();
+    for (const trigger of allTriggers) {
+      // We only delete time-based (CLOCK) triggers.
+      // This protects your web app (doPost) and any manual triggers.
+      if (trigger.getTriggerSource() === ScriptApp.TriggerSource.CLOCK) {
+        ScriptApp.deleteTrigger(trigger);
+        deletedCount++;
+      }
+    }
+    if (deletedCount > 0) {
+      Logger.log(`AHA_DeleteAllTimeBasedTriggers: Deleted ${deletedCount} old (CLOCK) triggers.`);
+    }
+  } catch (e) {
+    Logger.log(`Error in AHA_DeleteAllTimeBasedTriggers: ${e.message}`);
+    // We send a low-priority alert but don't stop the script.
+    AHA_SlackNotify3(`⚠️ A minor error occurred while cleaning old triggers: ${e.message}`);
+  }
+}
 
 
 
