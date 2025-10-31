@@ -234,8 +234,7 @@ function AHA_QuarantinePoisonPill() {
 
 /**
  * --- SAFE BATCH RUNNER (MODIFIED) ---
- * This function now calls the staged cleanup process instead of
- * the old monolithic function.
+ * -- MODIFIED to update the heartbeat on lock failure to prevent false "stale" state. --
  */
 function AHA_RunImportBatchSafely2() {
     const start = new Date();
@@ -262,6 +261,12 @@ function AHA_RunImportBatchSafely2() {
         if (!lockAcquired) {
             Logger.log(`Could not acquire lock after ${maxRetries} attempts. Aborting.`);
             AHA_SlackNotify3("⚠️ *Trigger cancelled*: Could not acquire lock after multiple attempts.");
+
+            // --- THE FIX ---
+            // Update the heartbeat. This tells the Watchdog "I'm alive, just locked."
+            PropertiesService.getScriptProperties().setProperty("LAST_IMPORT_HEARTBEAT", new Date().getTime());
+            // --- END FIX ---
+
             return;
         }
 
@@ -273,12 +278,13 @@ function AHA_RunImportBatchSafely2() {
                 logSheet.appendRow([new Date(), "Status", "✅ All Files processed. Starting Cleanup."]);
                 AHA_SlackNotify3("✅ *Completed* : All Files has been processed! Starting Cleanup...");
                 
-                // --- MODIFICATION ---
-                // Instead of calling the old function, start the new staged process.
                 AHA_StartCleanupProcess();
             }
         } catch (err) {
             Logger.log("Error in processNextBatch: " + err);
+            // --- THE FIX (PART 2) ---
+            PropertiesService.getScriptProperties().setProperty("LAST_IMPORT_HEARTBEAT", new Date().getTime());
+            // --- END FIX ---
         } finally {
             lock.releaseLock();
         }

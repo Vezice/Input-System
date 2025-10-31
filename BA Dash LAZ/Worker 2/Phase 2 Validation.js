@@ -446,21 +446,26 @@ function AHA_StartValTrigger2(minut = 1) {
 
 /**
  * A safe wrapper for the batch processor, using a lock to prevent concurrent executions.
+ * -- MODIFIED to update the heartbeat on lock failure to prevent false "stale" state. --
  */
 function AHA_RunValBatchSafely2() {
   const start = new Date();
   try {
-    // Get a script-level lock.
     const lock = LockService.getScriptLock();
-    // Try to acquire the lock, waiting up to 10 seconds.
     if (!lock.tryLock(10000)) {
       Logger.log("Another instance is already running.");
       AHA_SlackNotify3("⚠️ Trigger cancelled: Another instance is already running...");
+      
+      // --- THE FIX ---
+      // Update the heartbeat anyway. This tells the Watchdog "I'm alive, just locked."
+      // This prevents the Watchdog from seeing a "stale" process and entering a quarantine loop.
+      PropertiesService.getScriptProperties().setProperty("LAST_VALIDATION_HEARTBEAT", new Date().getTime());
+      // --- END FIX ---
+
       return; // Exit if another instance has the lock.
     }
 
     try {
-      // Re-check the critical error flag before each batch.
       if (AHA_CekBrandValidation2()) {
         const logSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIG.SHEET_NAMES.LOGS);
         Logger.log("Brand Validation sedang Error. Skipping Batch ~");
@@ -469,7 +474,6 @@ function AHA_RunValBatchSafely2() {
         AHA_StartValTrigger2(5); // Reschedule for later.
         return;
       } else {
-        // If okay, run the main batch function.
         AHA_ValidationBatch2();
       }
     } catch (err) {
@@ -477,8 +481,13 @@ function AHA_RunValBatchSafely2() {
       Logger.log(`Error in runValBatchSafely: ${err.toString()}`);
       logSheet.appendRow([new Date(), "Error", err.toString()]);
       AHA_SlackNotify3(`❌ Error in runValBatchSafely: ${err.toString()} ${CONFIG.SLACK.MENTION_USER}`);
+
+      // --- THE FIX (PART 2) ---
+      // Also update the heartbeat on a crash, just in case.
+      PropertiesService.getScriptProperties().setProperty("LAST_VALIDATION_HEARTBEAT", new Date().getTime());
+      // --- END FIX ---
+      
     } finally {
-      // CRITICAL: Always release the lock.
       lock.releaseLock();
     }
   } finally {

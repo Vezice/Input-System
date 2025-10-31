@@ -103,6 +103,7 @@ function doPost(e) {
   if (data.command === 'StartWorker') {
     // Schedule the worker to run shortly (time-driven trigger)
     // NOTE: Smallest practical delay is ~1 minute.
+    AHA_DeleteAllTimeBasedTriggers();
     ScriptApp.newTrigger('AHA_StartWorking3')
       .timeBased()
       .after(60 * 1000) // ~1 minute
