@@ -7,6 +7,7 @@
 // Synchronized
 // Mac Sync
 // Retry
+// Fino
 
 /**
  * Assigns an available temporary sheet (e.g., "Temp A") to a specific category by renaming it.
