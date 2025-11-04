@@ -34,7 +34,7 @@ Get-ChildItem -Path . -Filter "deployment.json" -Recurse | ForEach-Object {
     Push-Location $projectDir
     
     Write-Host "--> Pushing latest code..."
-    clasp push
+    clasp push --force
     
     # Read the deployment.json file
     $deployConfig = Get-Content -Raw -Path "deployment.json" | ConvertFrom-Json
