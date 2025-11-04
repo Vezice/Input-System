@@ -33,7 +33,10 @@ while IFS= read -r file; do
     (
         cd "$PROJECT_DIR"
         echo "--> Pushing latest code..."
-        clasp push
+        
+        # --- THIS IS THE FIX ---
+        # Add --force to automatically say "yes" to the manifest prompt
+        clasp push --force
 
         DEPLOYMENT_ID=$(jq -r '.deploymentId' deployment.json)
         if [ -n "$DEPLOYMENT_ID" ] && [ "$DEPLOYMENT_ID" != "null" ]; then
