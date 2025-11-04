@@ -351,6 +351,7 @@ function AHA_RunFinalization() {
 /**
  * --- NEW FUNCTION: STEP 3 & 4 (ARCHIVE & CLEANUP) ---
  * Replaces the rest of the old AHA_RemoveAllTriggers2
+ * * -- MODIFIED to include a final "goodbye" message --
  */
 function AHA_RunArchiving() {
   try {
@@ -367,6 +368,11 @@ function AHA_RunArchiving() {
       .timeBased()
       .after(60 * 1000)
       .create();
+
+    // --- [THIS IS THE NEW LINE YOU ADDED] ---
+    // Send the friendly "hi" / "goodbye" message to the user
+    AHA_SayGoodbye();
+    // --- [END OF NEW LINE] ---
 
     // --- FINAL RESET ---
     // 1. Delete the status property to signal "OFFLINE"
