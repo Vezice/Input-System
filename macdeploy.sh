@@ -22,7 +22,7 @@ echo -e "\033[0;36mStep 2/3: Committing with message: \"$MESSAGE\"\033[0m"
 git commit -m "$MESSAGE"
 
 echo -e "\033[0;36mStep 3/3: Pushing to GitHub...\033[0m"
-git push
+git push --force
 
 # --- Part 2: Clasp Push and Deploy ---
 echo -e "\n\033[0;32mStarting batch push and deploy for all projects...\033[0m"
