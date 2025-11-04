@@ -57,3 +57,33 @@ function AHA_TestSendMessage3(){
     AHA_LogRuntime3(end - start);
   }
 }
+
+/**
+ * Sends a friendly sign-off message at the end of a successful worker run.
+ * This is called by AHA_RunArchiving just before the worker goes offline.
+ */
+function AHA_SayGoodbye() {
+  const start = new Date();
+  try {
+    // You can customize these messages
+    const messages = [
+      "All done for now! Taking a quick break. 👋",
+      "Task complete! Going back to sleep. 😴",
+      "Finished my work! See you next time. 👍",
+      "That's a wrap! All files processed. 🎉"
+    ];
+    
+    // Pick a random one to feel more personal
+    const message = messages[Math.floor(Math.random() * messages.length)];
+    
+    AHA_SlackNotify3(message);
+
+  } catch (err) {
+    Logger.log(`Error in AHA_SayGoodbye: ${err.message}`);
+    // We don't want the goodbye message to cause a failure, so we just log it.
+  } finally {
+    const end = new Date();
+    // Log runtime, just like all other helper functions
+    AHA_LogRuntime3(end - start); 
+  }
+}
