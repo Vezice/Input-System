@@ -34,7 +34,7 @@ Get-ChildItem -Path . -Filter "deployment.json" -Recurse | ForEach-Object {
     Push-Location $projectDir
     
     Write-Host "--> Pushing latest code..."
-    clasp push
+    clasp push --force
     
     # Read the deployment.json file
     $deployConfig = Get-Content -Raw -Path "deployment.json" | ConvertFrom-Json
@@ -43,7 +43,7 @@ Get-ChildItem -Path . -Filter "deployment.json" -Recurse | ForEach-Object {
     if ($deploymentId) {
         Write-Host "--> Deploying project to ID: $deploymentId"
         # Use the commit message for the deployment description
-        clasp deploy --force --deploymentId $deploymentId --description "$MESSAGE"
+        clasp deploy --deploymentId $deploymentId --description "$MESSAGE"
     } else {
         Write-Host "--> WARNING: No deploymentId found. Skipping deployment." -ForegroundColor Yellow
     }
