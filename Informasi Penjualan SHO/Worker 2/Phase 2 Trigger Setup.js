@@ -371,7 +371,7 @@ function AHA_RunArchiving() {
 
     // --- [THIS IS THE NEW LINE YOU ADDED] ---
     // Send the friendly "hi" / "goodbye" message to the user
-    AHA_SayGoodbye();
+    // AHA_SayGoodbye();
     // --- [END OF NEW LINE] ---
 
     // --- FINAL RESET ---

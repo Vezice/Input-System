@@ -9,7 +9,7 @@
 const CONFIG = {
   BATCH_SIZE: 10, // The number of files to process in a single execution run to avoid timeouts.
   CATEGORY_IMPORTING_ENABLED: true, // A feature flag to enable or disable category importing.
-  FAILURE_LOG_DOC_ID: "1oiJtDXBLIFq_LEa9yypEw7R8ZBfon3mQ6L4i8EqhWDQ",
+  FAILURE_LOG_DOC_ID: "1sEqcKalRpWOakM82Ffr-BRNN17ft4wUnv31fSIuQZYw",
   SHEET_NAMES: { // Standardizes sheet names used throughout the script.
     INPUT: "Input",
     LOGS: "Logs",
@@ -748,9 +748,11 @@ function AHA_ValidateBrandCodeFromSheet(brandCode, category) {
   }
 }
 
+// [File: Phase 2 Validation.js]
+
 /**
- * Appends a new failure log entry to the central Google Doc.
- * This function is designed to be fail-safe with retries.
+ * Appends a new failure log entry to the central Google Sheet.
+ * This version uses SpreadsheetApp.appendRow() and requires no new permissions.
  *
  * @param {string} fileName The name of the file that failed.
  * @param {string} reason The reason for the failure (e.g., "Wrong Data", "Process Error").
@@ -759,25 +761,34 @@ function AHA_ValidateBrandCodeFromSheet(brandCode, category) {
  */
 function AHA_LogFailureToDoc(fileName, reason, category, workerName) {
   try {
-    if (!CONFIG.FAILURE_LOG_DOC_ID) {
-      Logger.log("FAILURE_LOG_DOC_ID not set in CONFIG. Skipping log.");
+    if (!CONFIG.FAILURE_LOG_DOC_ID) { // This variable now holds the Sheet ID
+      Logger.log("FAILURE_LOG_DOC_ID (Sheet ID) not set in CONFIG. Skipping log.");
       return;
     }
 
-    // Format: ISO 8601 Date | File Name | Reason | Worker Info
-    const timestamp = new Date().toISOString();
+    // Format the log row
+    const timestamp = new Date(); // Use a date object, Google Sheets prefers this
     const workerInfo = `${category} - ${workerName}`;
-    const logLine = `[${timestamp}] | ${fileName} | ${reason} | ${workerInfo}\n`;
+
+    // This is the data to append. Make sure your log sheet has 4 columns:
+    // Timestamp | File Name | Reason | Worker Info
+    const logLine = [timestamp, fileName, reason, workerInfo];
 
     AHA_ExecuteWithRetry(() => {
-      const doc = DocumentApp.openById(CONFIG.FAILURE_LOG_DOC_ID);
-      const body = doc.getBody();
-      body.appendParagraph(logLine);
-    }, 'LogFailureToDoc', 3, 2000); // Retry 3 times
+      // Open the central LOG SPREADSHEET
+      const logSpreadsheet = SpreadsheetApp.openById(CONFIG.FAILURE_LOG_DOC_ID);
+
+      // Get the specific sheet (e.g., "Failures" or just the first sheet)
+      const logSheet = logSpreadsheet.getSheets()[0]; // Or use .getSheetByName("Failures")
+
+      // Append the data as a new row
+      logSheet.appendRow(logLine);
+
+    }, 'LogFailureToSheet', 3, 2000); // Retry 3 times
 
   } catch (err) {
-    Logger.log(`CRITICAL: Failed to write to Failure Log Doc after all retries: ${err.message}`);
-    AHA_SlackNotify3(`❌ CRITICAL: Failed to write to Failure Log Doc for file ${fileName}. ${CONFIG.SLACK.MENTION_USER}`);
+    Logger.log(`CRITICAL: Failed to write to Failure Log Sheet after all retries: ${err.message}`);
+    AHA_SlackNotify3(`❌ CRITICAL: Failed to write to Failure Log Sheet for file ${fileName}. ${CONFIG.SLACK.MENTION_USER}`);
   }
 }
 
