@@ -624,14 +624,16 @@ function AHA_DeleteTriggerByName3(triggerFunctionName) {
 }
 
 /**
- * Checks the central 'Failed' folder, reads the 'FAILURE_LOG' Google Doc,
+ * Checks the central 'Failed' folder, reads the 'FAILURE_LOG' Google SPREADSHEET,
  * and sends a smart, cross-referenced report to Slack.
+ *
+ * -- MODIFIED to read from a Google Sheet, not a Google Doc --
  */
 function AHA_CheckFailedImports3() {
   // --- CONFIGURATION ---
-  // This must be the SAME ID you put in the Worker's CONFIG.
-  const FAILURE_LOG_DOC_ID = "1oiJtDXBLIFq_LEa9yypEw7R8ZBfon3mQ6L4i8EqhWDQ";
-  const MENTION_USER_ON_ERROR = "<@U08TUF8LW2H>"; // <-- FIX: Hardcode the user ID here
+  // This is the ID of your FAILURE LOG SPREADSHEET
+  const FAILURE_LOG_DOC_ID = "1oiJtDXBLIFq_LEa9yypEw7R8ZBfon3mQ6L4i8EqhWDQ"; // This is now a Spreadsheet ID
+  const MENTION_USER_ON_ERROR = "<@U08TUF8LW2H>";
   // ---
   
   try {
@@ -662,22 +664,32 @@ function AHA_CheckFailedImports3() {
       return;
     }
 
-    // --- NEW LOGIC: Read and Parse the Google Doc ---
+    // --- FIX: Read and Parse the Google SPREADSHEET ---
     const failureLog = new Map();
     try {
-      const doc = DocumentApp.openById(FAILURE_LOG_DOC_ID);
-      const logText = doc.getBody().getText();
-      const logLines = logText.split('\n').filter(Boolean); // Split by line, remove blanks
+      // 1. Open the SPREADSHEET, not a Doc
+      const logSpreadsheet = SpreadsheetApp.openById(FAILURE_LOG_DOC_ID);
+      // 2. Get the first sheet (or change "getSheets()[0]" to "getSheetByName('LogSheetName')")
+      const logSheet = logSpreadsheet.getSheets()[0]; 
+      if (logSheet.getLastRow() < 2) {
+        throw new Error("Failure log sheet is empty.");
+      }
       
-      for (const line of logLines) {
-        const parts = line.split(' | ');
-        if (parts.length < 4) continue; // Skip malformed lines
+      // 3. Get all data from the sheet (assuming headers are in row 1)
+      const logLines = logSheet.getRange(2, 1, logSheet.getLastRow() - 1, 4).getValues();
+      
+      // 4. Loop through the ROWS (which are arrays)
+      for (const row of logLines) {
+        if (!row || row.length < 4) continue; // Skip malformed rows
 
-        const dateStr = parts[0].replace('[', '').replace(']', '');
-        const fileName = parts[1].trim();
-        const reason = parts[2].trim();
-        const workerInfo = parts[3].trim();
-        const logDate = new Date(dateStr);
+        // Assign columns directly. Assumes:
+        // Col A: Timestamp, Col B: File Name, Col C: Reason, Col D: Worker
+        const logDate = new Date(row[0]); // getValues() returns a Date object
+        const fileName = row[1].toString().trim();
+        const reason = row[2].toString().trim();
+        const workerInfo = row[3].toString().trim();
+
+        if (!fileName || isNaN(logDate.getTime())) continue; // Skip rows with invalid data
 
         // Check if this file is one of the ones *currently* in the folder
         if (filesInFolder.has(fileName)) {
@@ -693,10 +705,11 @@ function AHA_CheckFailedImports3() {
         }
       }
     } catch (docErr) {
-      // --- FIX: Use the new hardcoded variable ---
-      AHA_SlackNotify3(`❌ *Error*: Could not read the Failure Log Doc: ${docErr.message} ${MENTION_USER_ON_ERROR}`);
+      // This error will now correctly report issues with SpreadsheetApp
+      AHA_SlackNotify3(`❌ *Error*: Could not read the Failure Log Sheet: ${docErr.message} ${MENTION_USER_ON_ERROR}`);
       // Continue without log data if it fails
     }
+    // --- END OF FIX ---
 
     // --- Build the Smart Slack Message ---
     let message = `🚨 *Failed Imports Report!* ${filesInFolder.size} file(s) are in the 'Failed' folder:\n\n`;
@@ -733,7 +746,6 @@ function AHA_CheckFailedImports3() {
 
   } catch (e) {
     Logger.log(`Fatal Error in AHA_CheckFailedImports: ${e.message}`);
-    // --- FIX: Use the new hardcoded variable ---
     AHA_SlackNotify3(`❌ *Fatal Error* in CheckFailedImports: ${e.message} ${MENTION_USER_ON_ERROR}`);
   }
   

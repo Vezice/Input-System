@@ -802,6 +802,7 @@ function AHA_DeleteUnusedTempSheets2() {
 
 /**
  * Reads the 'Type Validation' sheet to get the standard, ordered list of headers for a given category.
+ * -- MODIFIED to dynamically read ALL columns, not just A:Z --
  * @param {string} category The category to look up.
  * @returns {Array<string>} An array of standard header names.
  */
@@ -810,7 +811,17 @@ function AHA_GetStandardHeaders(category) {
   const sheet = ss.getSheetByName(CONFIG.SHEET_NAMES.TYPE_VALIDATION);
   if (!sheet) return [];
 
-  const data = sheet.getRange("A2:Z" + sheet.getLastRow()).getValues();
+  // --- FIX ---
+  // The original code used .getRange("A2:Z" + sheet.getLastRow()), which hard-coded
+  // the maximum column to 'Z'. This new code uses .getLastColumn() to
+  // dynamically fetch all columns, ensuring no headers are missed.
+  const data = sheet.getRange(
+    2,                          // Starting row
+    1,                          // Starting column (A)
+    sheet.getLastRow() - 1,     // Number of rows (all data rows)
+    sheet.getLastColumn()       // Number of columns (all available columns)
+  ).getValues();
+  // --- END FIX ---
 
   for (const row of data) {
     if (row[0] === category) {
