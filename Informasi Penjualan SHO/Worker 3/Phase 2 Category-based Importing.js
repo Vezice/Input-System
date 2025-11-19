@@ -320,16 +320,7 @@ function AHA_ImportCategoryBatchInBatches2() {
 
 /**
  * Re-usable processor for all generic files.
- * This is the new "brain" that handles SUM and COALESCE logic.
- * @param {Array<Array<any>>} data The full data from the source file.
- * @param {GoogleAppsScript.Spreadsheet.Sheet} targetSheet The temp sheet to write to.
- * @param {string} folderName The brand/account name.
- * @param {number} dataRowIndex The starting row index for data.
- * @param {Array<string>} standardHeaders The "ideal" list of headers (e.g., ["SKU", "Jumlah Stok"]).
- * @param {Object} specialRules The rulebook from the "Unique Column" sheet.
- * @param {Map<string, number>} sourceHeaderMap A lookup map of headers in the source file.
- * @param {boolean} includeBrandColumn True if an "Akun" column should be prepended.
- * @returns {boolean} True if import succeeded, false if no data was found.
+ * -- MODIFIED to handle Duplicate Headers (First Come First Serve) --
  */
 function AHA_ProcessAdvancedImport(data, targetSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap, includeBrandColumn) {
   try {
@@ -343,55 +334,78 @@ function AHA_ProcessAdvancedImport(data, targetSheet, folderName, dataRowIndex, 
     const transformedData = [];
     const sourceHeaderList = Array.from(sourceHeaderMap.keys()); // Get all lowercase source headers
 
+    // --- PRE-CALCULATE COLUMN MAPPING (The Fix) ---
+    // We create a "working copy" of the map so we can shift() indices out of it 
+    // without destroying the original map for other functions.
+    const workingHeaderMap = new Map();
+    sourceHeaderMap.forEach((indices, key) => {
+        workingHeaderMap.set(key, [...indices]); // Clone the array of indices
+    });
+
+    // Determine exactly which source column index corresponds to each standard header
+    const columnMapping = standardHeaders.map(header => {
+        const key = header.toLowerCase().trim();
+        if (workingHeaderMap.has(key)) {
+            const indices = workingHeaderMap.get(key);
+            if (indices.length > 0) {
+                return indices.shift(); // TAKE the first available index (First Come, First Serve)
+            }
+        }
+        return -1; // Not found via direct match
+    });
+    // ----------------------------------------------
+
     // Loop through each valid row of data from the source file
     for (const sourceRow of content) {
       const newRow = [];
       
-      // Loop through the "Standard" headers (our ideal output)
-      for (const standardHeader of standardHeaders) {
-        const standardHeaderLower = standardHeader.toLowerCase().trim();
-        let value = ''; // Default value
+      // Loop through the "Standard" headers
+      for (let i = 0; i < standardHeaders.length; i++) {
+        const standardHeader = standardHeaders[i];
+        const directSourceIndex = columnMapping[i]; // Use our pre-calculated index
+        let value = ''; 
         let found = false;
 
-        // Check 1: Simple 1-to-1 match
-        if (sourceHeaderMap.has(standardHeaderLower)) {
-          value = sourceRow[sourceHeaderMap.get(standardHeaderLower)];
+        // Check 1: Simple 1-to-1 match (using the specific index we reserved)
+        if (directSourceIndex !== -1) {
+          value = sourceRow[directSourceIndex];
           found = true;
         } 
         // Check 2: Special rules (SUM_STARTS_WITH or COALESCE_STARTS_WITH)
         else if (specialRules[standardHeader]) {
           const rule = specialRules[standardHeader];
           const action = rule.action;
-          // The "pattern" is the first (and only) item in the replacements array
           const pattern = (rule.replacements[0] || "").toLowerCase().trim();
           
-          if (!pattern) continue; // Skip rule if pattern is missing
+          if (!pattern) continue; 
 
           if (action === "SUM_STARTS_WITH") {
             let sum = 0;
-            // Find all source headers that start with the pattern
             const matchingHeaders = sourceHeaderList.filter(h => h.startsWith(pattern));
             for (const header of matchingHeaders) {
-              const cellVal = Number(sourceRow[sourceHeaderMap.get(header)]);
-              if (!isNaN(cellVal)) {
-                sum += cellVal;
+              // Loop through ALL columns associated with this header (in case of duplicates)
+              const indices = sourceHeaderMap.get(header);
+              for (const idx of indices) {
+                const cellVal = Number(sourceRow[idx]);
+                if (!isNaN(cellVal)) {
+                    sum += cellVal;
+                }
               }
             }
             value = sum;
             found = true;
           } 
           else if (action === "COALESCE_STARTS_WITH") {
-            // Find all source headers that start with the pattern
             const matchingHeaders = sourceHeaderList.filter(h => h.startsWith(pattern));
             if (matchingHeaders.length > 0) {
-              // Get the value from the *first* matching header
-              value = sourceRow[sourceHeaderMap.get(matchingHeaders[0])];
+              // Get the value from the *first* matching header's *first* column
+              const firstIdx = sourceHeaderMap.get(matchingHeaders[0])[0];
+              value = sourceRow[firstIdx];
               found = true;
             }
           }
         }
         
-        // If not found in simple match or special rules, value remains ''
         newRow.push(value);
       }
       transformedData.push(newRow);
@@ -400,17 +414,15 @@ function AHA_ProcessAdvancedImport(data, targetSheet, folderName, dataRowIndex, 
     if (transformedData.length > 0) {
       const targetRow = targetSheet.getLastRow() + 1;
       if (includeBrandColumn) {
-        // Add the "Akun" column
         const folderCol = Array(transformedData.length).fill([folderName]);
         targetSheet.getRange(targetRow, 1, transformedData.length, 1).setValues(folderCol);
         targetSheet.getRange(targetRow, 2, transformedData.length, standardHeaders.length).setValues(transformedData);
       } else {
-        // No "Akun" column
         targetSheet.getRange(targetRow, 1, transformedData.length, standardHeaders.length).setValues(transformedData);
       }
       return true;
     }
-    return false; // No data transformed
+    return false; 
 
   } catch (err) {
     Logger.log(`Error in AHA_ProcessAdvancedImport for ${folderName}: ${err.message}`);
@@ -447,6 +459,7 @@ function AHA_ProcessBAProdukTIKFile(data, targetSheet, logSheet, folderName, dat
 
 /**
  * Special function for single-row reports (SHO, TIK, TOK).
+ * -- MODIFIED to handle Array-based header map --
  */
 function AHA_ProcessSingleRowReport(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap) {
   try {
@@ -456,7 +469,7 @@ function AHA_ProcessSingleRowReport(data, targetSheet, logSheet, folderName, dat
     if (!sourceRow || !sourceRow.some(cell => (cell || "").toString().trim() !== "")) return false;
 
     const transformedRow = [];
-    const sourceHeaderList = Array.from(sourceHeaderMap.keys()); // Get all lowercase source headers
+    const sourceHeaderList = Array.from(sourceHeaderMap.keys()); 
 
     for (const standardHeader of standardHeaders) {
         const standardHeaderLower = standardHeader.toLowerCase().trim();
@@ -465,7 +478,9 @@ function AHA_ProcessSingleRowReport(data, targetSheet, logSheet, folderName, dat
 
         // Check 1: Simple 1-to-1 match
         if (sourceHeaderMap.has(standardHeaderLower)) {
-            value = sourceRow[sourceHeaderMap.get(standardHeaderLower)];
+            // FIX: Access [0] because the map now returns an array of indices
+            const idx = sourceHeaderMap.get(standardHeaderLower)[0];
+            value = sourceRow[idx];
             found = true;
         } 
         // Check 2: Special rules
@@ -476,21 +491,19 @@ function AHA_ProcessSingleRowReport(data, targetSheet, logSheet, folderName, dat
 
             if (!pattern) continue;
 
-            // Note: SUM_STARTS_WITH doesn't make much sense for a single-row report,
-            // but COALESCE_STARTS_WITH (for currency) is perfect.
             if (action === "COALESCE_STARTS_WITH") {
                 const matchingHeaders = sourceHeaderList.filter(h => h.startsWith(pattern));
                 if (matchingHeaders.length > 0) {
-                    value = sourceRow[sourceHeaderMap.get(matchingHeaders[0])]; // Get first match
+                    // FIX: Access [0] here too
+                    const idx = sourceHeaderMap.get(matchingHeaders[0])[0];
+                    value = sourceRow[idx]; 
                     found = true;
                 }
             }
-            // (You could add SUM_STARTS_WITH here if needed for single-row reports)
         }
         transformedRow.push(value);
     }
 
-    // Special logic for SHO (and now TIK/TOK)
     if (typeof transformedRow[0] === 'string' && transformedRow[0].length > 10) {
         transformedRow[0] = transformedRow[0].substring(0, 10);
     }
@@ -514,11 +527,8 @@ function AHA_ProcessBADashTOKFile(data, targetSheet, logSheet, folderName, dataR
   return AHA_ProcessSingleRowReport(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap);
 }
 
-
 function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap) {
     try {
-        // This function has its own unique processing logic for formatting,
-        // but it still needs the new header mapping logic.
         const startDataRow = dataRowIndex - 1;
         if (startDataRow >= data.length) return false;
         const sourceRow = data[startDataRow];
@@ -533,7 +543,9 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
             let found = false;
 
             if (sourceHeaderMap.has(standardHeaderLower)) {
-                value = sourceRow[sourceHeaderMap.get(standardHeaderLower)];
+                // FIX: Access [0]
+                const idx = sourceHeaderMap.get(standardHeaderLower)[0];
+                value = sourceRow[idx];
                 found = true;
             } else if (specialRules[standardHeader]) {
                 const rule = specialRules[standardHeader];
@@ -545,7 +557,9 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
                 if (action === "COALESCE_STARTS_WITH") {
                     const matchingHeaders = sourceHeaderList.filter(h => h.startsWith(pattern));
                     if (matchingHeaders.length > 0) {
-                        value = sourceRow[sourceHeaderMap.get(matchingHeaders[0])];
+                        // FIX: Access [0]
+                        const idx = sourceHeaderMap.get(matchingHeaders[0])[0];
+                        value = sourceRow[idx];
                         found = true;
                     }
                 }
@@ -558,14 +572,14 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
         for (let i = 0; i < transformedRow.length; i++) {
             let value = transformedRow[i];
             
-            if (i === 0) { // Date formatting for the first data column
+            if (i === 0) { 
                 try {
                     if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}$/)) {
                         const dateObject = new Date(value);
                         value = Utilities.formatDate(dateObject, Session.getScriptTimeZone(), "dd MMM yyyy");
                     }
                 } catch (e) {
-                    Logger.log(`Could not format date for BA Dash LAZ. Original value: '${value}'. Error: ${e.message}`);
+                    Logger.log(`Could not format date for BA Dash LAZ. Error: ${e.message}`);
                 }
                 processedRow.push(value);
                 continue;
@@ -871,16 +885,20 @@ function AHA_GetSpecialColumnRules(category) {
 
 /**
  * Creates a fast-lookup map of a file's headers.
+ * -- MODIFIED to handle duplicate headers by storing an array of indices --
  * @param {Array<string>} fileHeaders The array of header names from the source file.
- * @returns {Map<string, number>} A map where key is lowercase header, value is original index.
+ * @returns {Map<string, Array<number>>} A map where key is lowercase header, value is ARRAY of original indices.
  */
 function AHA_GetSourceHeaderIndices(fileHeaders) {
   const headerMap = new Map();
   fileHeaders.forEach((header, index) => {
     const standardizedHeader = (header || "").toString().toLowerCase().trim();
+    // If key doesn't exist, create an empty array
     if (!headerMap.has(standardizedHeader)) {
-      headerMap.set(standardizedHeader, index);
+      headerMap.set(standardizedHeader, []);
     }
+    // Push the index into the array (Queueing it up)
+    headerMap.get(standardizedHeader).push(index);
   });
   return headerMap;
 }
