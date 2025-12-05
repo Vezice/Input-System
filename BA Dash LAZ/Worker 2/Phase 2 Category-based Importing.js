@@ -537,13 +537,13 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
         const transformedRow = [];
         const sourceHeaderList = Array.from(sourceHeaderMap.keys());
 
+        // 1. Map data based on standard headers
         for (const standardHeader of standardHeaders) {
             const standardHeaderLower = standardHeader.toLowerCase().trim();
             let value = '';
             let found = false;
 
             if (sourceHeaderMap.has(standardHeaderLower)) {
-                // FIX: Access [0]
                 const idx = sourceHeaderMap.get(standardHeaderLower)[0];
                 value = sourceRow[idx];
                 found = true;
@@ -557,7 +557,6 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
                 if (action === "COALESCE_STARTS_WITH") {
                     const matchingHeaders = sourceHeaderList.filter(h => h.startsWith(pattern));
                     if (matchingHeaders.length > 0) {
-                        // FIX: Access [0]
                         const idx = sourceHeaderMap.get(matchingHeaders[0])[0];
                         value = sourceRow[idx];
                         found = true;
@@ -567,11 +566,15 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
             transformedRow.push(value);
         }
 
-        // Apply special LAZ formatting
+        // 2. Apply special formatting logic
         const processedRow = [];
+        const conversionHeaderName = "Tingkat Konversi"; // The specific column to target
+
         for (let i = 0; i < transformedRow.length; i++) {
             let value = transformedRow[i];
+            const currentHeader = standardHeaders[i];
             
+            // Handle Date (Always the first column)
             if (i === 0) { 
                 try {
                     if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}$/)) {
@@ -584,24 +587,56 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
                 processedRow.push(value);
                 continue;
             }
+
+            // Handle existing Percentage strings
             if (typeof value === 'string' && value.includes('%')) {
                 processedRow.push(value);
                 continue;
             }
+
+            // --- FIX START: Handle "Tingkat Konversi" ---
+            // If this is the specific column, keep the decimal value (e.g. 0.01)
+            // and skip the parseInt logic.
+            if (currentHeader === conversionHeaderName) {
+                processedRow.push(value); 
+                continue;
+            }
+            // --- FIX END ---
+
+            // Default: Convert all other numbers to integers
             if (value !== null && value !== '' && !isNaN(value)) { 
                 value = parseInt(value, 10); 
             }
             processedRow.push(value);
         }
         
+        // 3. Write data to sheet
         if (processedRow.length > 0) {
             const targetRow = targetSheet.getLastRow() + 1;
             targetSheet.getRange(targetRow, 1).setValue(folderName);
             targetSheet.getRange(targetRow, 2, 1, processedRow.length).setValues([processedRow]);
+            
+            // Apply standard integer formatting to columns 3 onwards
             if (processedRow.length > 1) { 
                 const numberRange = targetSheet.getRange(targetRow, 3, 1, processedRow.length - 1);
                 numberRange.setNumberFormat("#,##0");
             }
+
+            // --- FIX START: Apply % Formatting to "Tingkat Konversi" ---
+            // Calculate the exact column number for Tingkat Konversi
+            const conversionIndex = standardHeaders.indexOf(conversionHeaderName);
+            
+            // Column 1 is FolderName, Column 2 is Data[0]... so Data[i] is at Column 2 + i
+            if (conversionIndex !== -1) {
+                const targetCol = 2 + conversionIndex;
+                // Only override formatting if it falls within the data range
+                if (targetCol >= 2) {
+                     targetSheet.getRange(targetRow, targetCol).setNumberFormat("0.00%");
+                     // 0.01 will now appear as "1.00%"
+                }
+            }
+            // --- FIX END ---
+
             return true;
         }
         return false;
