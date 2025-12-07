@@ -432,7 +432,12 @@ function AHA_ProcessMergeBatch3() {
     }
     const rowsToCopy = dataToCopy.slice(1);
     if (rowsToCopy.length > 0 && tempSheet) { 
-      tempSheet.getRange(tempSheet.getLastRow() + 1, 1, rowsToCopy.length, rowsToCopy[0].length).setValues(rowsToCopy);
+      // Define the target range
+      const targetRange = tempSheet.getRange(tempSheet.getLastRow() + 1, 1, rowsToCopy.length, rowsToCopy[0].length);
+      
+      // Force Plain Text (@) formatting BEFORE pasting to preserve "04 December 2025" as-is
+      targetRange.setNumberFormat("@").setValues(rowsToCopy);
+      
       AHA_SlackNotify3(`➡️ *Merge Process*: Copied ${rowsToCopy.length} rows from *${worker}* for *${category}*.`);
       Logger.log(`Copied ${rowsToCopy.length} rows from ${worker} for ${category}.`);
     }
@@ -503,11 +508,15 @@ function AHA_ProcessBADashMergeBatch3() {
 
     const originalSheet = targetSS.getSheetByName(category);
     if (originalSheet) {
-      const originalData = originalSheet.getDataRange().getValues();
+      // Use getDisplayValues() to capture the exact look (e.g., "04 December 2025")
+      const originalData = originalSheet.getDataRange().getDisplayValues();
       if (originalData.length > 0) {
-        tempSheet.getRange(1, 1, originalData.length, originalData[0].length).setValues(originalData);
-        AHA_SlackNotify3(`📋 *BA Dash Merge*: Copied ${originalData.length} existing rows from *${category}*.`);
-        Logger.log(`Copied ${originalData.length} existing rows from '${category}'.`);
+          const targetRange = tempSheet.getRange(1, 1, originalData.length, originalData[0].length);
+          // Force Plain Text formatting to prevent auto-conversion
+          targetRange.setNumberFormat("@").setValues(originalData);
+          
+          AHA_SlackNotify3(`📋 *BA Dash Merge*: Copied ${originalData.length} existing rows from *${category}*.`);
+          Logger.log(`Copied ${originalData.length} existing rows from '${category}'.`);
       }
     }
   } else {
@@ -538,7 +547,10 @@ function AHA_ProcessBADashMergeBatch3() {
     if (dataToCopy && dataToCopy.length > 1) {
       const rowsToCopy = dataToCopy.slice(1); 
       if (rowsToCopy.length > 0) {
-        tempSheet.getRange(tempSheet.getLastRow() + 1, 1, rowsToCopy.length, rowsToCopy[0].length).setValues(rowsToCopy);
+        const targetRange = tempSheet.getRange(tempSheet.getLastRow() + 1, 1, rowsToCopy.length, rowsToCopy[0].length);
+        // Force Plain Text formatting before pasting
+        targetRange.setNumberFormat("@").setValues(rowsToCopy);
+
         Logger.log(`Appended ${rowsToCopy.length} rows from ${worker} for ${category}.`);
         AHA_SlackNotify3(`➡️ *BA Dash Merge*: Appended ${rowsToCopy.length} rows from *${worker}* for *${category}*.`);
       }
