@@ -747,7 +747,7 @@ function AHA_StartCreateTempSheetsBatch2() {
     AHA_DeleteTriggers2("AHA_CreateNextTempSheet2");
     ScriptApp.newTrigger("AHA_CreateNextTempSheet2")
       .timeBased()
-      .after(5 * 1000)
+      .after(1 * 1000)
       .create();
   } finally {
     const end = new Date();
