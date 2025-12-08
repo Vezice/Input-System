@@ -517,9 +517,84 @@ function AHA_ProcessSingleRowReport(data, targetSheet, logSheet, folderName, dat
   }
 }
 
+/**
+ * Special processor for BA Dash SHO.
+ * - Truncates the double date string.
+ * - Swaps DD-MM-YYYY to MM-DD-YYYY for system compatibility.
+ */
 function AHA_ProcessBADashSHOFile(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap) {
-  return AHA_ProcessSingleRowReport(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap);
+  try {
+    const startDataRow = dataRowIndex - 1;
+    if (startDataRow >= data.length) return false;
+    const sourceRow = data[startDataRow];
+    // Ensure the row isn't empty
+    if (!sourceRow || !sourceRow.some(cell => (cell || "").toString().trim() !== "")) return false;
+
+    const transformedRow = [];
+    const sourceHeaderList = Array.from(sourceHeaderMap.keys()); 
+
+    // 1. Standard Data Mapping
+    for (const standardHeader of standardHeaders) {
+        const standardHeaderLower = standardHeader.toLowerCase().trim();
+        let value = '';
+
+        if (sourceHeaderMap.has(standardHeaderLower)) {
+            const idx = sourceHeaderMap.get(standardHeaderLower)[0];
+            value = sourceRow[idx];
+        } 
+        else if (specialRules[standardHeader]) {
+            const rule = specialRules[standardHeader];
+            const action = rule.action;
+            const pattern = (rule.replacements[0] || "").toLowerCase().trim();
+
+            if (pattern && action === "COALESCE_STARTS_WITH") {
+                const matchingHeaders = sourceHeaderList.filter(h => h.startsWith(pattern));
+                if (matchingHeaders.length > 0) {
+                    const idx = sourceHeaderMap.get(matchingHeaders[0])[0];
+                    value = sourceRow[idx]; 
+                }
+            }
+        }
+        transformedRow.push(value);
+    }
+
+    // 2. Specific Date Formatting for SHO
+    // Original format in file: "DD-MM-YYYY-DD-MM-YYYY" (e.g., 05-12-2025-05-12-2025)
+    // Target format: "MM-DD-YYYY" (e.g., 12-05-2025)
+    
+    if (typeof transformedRow[0] === 'string' && transformedRow[0].length >= 10) {
+        // A. Truncate to get the first date "05-12-2025"
+        let dateStr = transformedRow[0].substring(0, 10);
+        
+        // B. Swap Day and Month
+        // We assume the file is DD-MM-YYYY
+        const parts = dateStr.split('-');
+        if (parts.length === 3) {
+            const dd = parts[0];
+            const mm = parts[1];
+            const yyyy = parts[2];
+            
+            // Reconstruct as MM-DD-YYYY
+            transformedRow[0] = `${mm}-${dd}-${yyyy}`;
+        } else {
+             // Safety fallback: if it doesn't have 3 parts, leave the truncated version
+             transformedRow[0] = dateStr;
+        }
+    }
+
+    // 3. Write to Sheet
+    const targetRow = targetSheet.getLastRow() + 1;
+    targetSheet.getRange(targetRow, 1).setValue(folderName);
+    targetSheet.getRange(targetRow, 2, 1, transformedRow.length).setValues([transformedRow]);
+    
+    return true;
+
+  } catch (err) {
+    Logger.log(`Error processing BA Dash SHO for ${folderName}: ${err.message}`);
+    return false;
+  }
 }
+
 function AHA_ProcessBADashTIKFile(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap) {
   return AHA_ProcessSingleRowReport(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap);
 }
