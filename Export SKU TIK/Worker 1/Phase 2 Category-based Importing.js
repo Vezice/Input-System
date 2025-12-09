@@ -167,7 +167,7 @@ function AHA_ImportCategoryBatchInBatches2() {
                     const fileIterator = folder.getFilesByName(fileName);
                     if (!fileIterator.hasNext()) { /* ... (error handling) ... */ continue; }
                     const file = fileIterator.next();
-                    const maxRetries = 5;
+                    const maxRetries = 10;
                     const retryDelay = 10000;
 
                     for (let attempt = 0; attempt < maxRetries; attempt++) {
