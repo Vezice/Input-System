@@ -113,7 +113,22 @@ function AHA_ImportByCategoryBatch2() {
  * -- MODIFIED to use advanced column mapping (SUM/COALESCE) --
  */
 function AHA_ImportCategoryBatchInBatches2() {
-    const start = new Date();
+  // 1. Try to acquire a lock for this specific worker
+  const lock = LockService.getScriptLock();
+  
+  // Wait up to 5 seconds to get the lock. If failed, it means another instance is running.
+  try {
+    const hasLock = lock.tryLock(5000); 
+    if (!hasLock) {
+      Logger.log("⚠️ Script is already running. Exiting to prevent duplicates.");
+      return; // EXIT IMMEDIATELY
+    }
+  } catch (e) {
+    Logger.log("⚠️ Could not acquire lock: " + e.message);
+    return;
+  }  
+  
+  const start = new Date();
     try {
         const ss = SpreadsheetApp.getActiveSpreadsheet();
         const inputSheet = ss.getSheetByName(CONFIG.SHEET_NAMES.INPUT);
@@ -308,6 +323,7 @@ function AHA_ImportCategoryBatchInBatches2() {
         PropertiesService.getScriptProperties().setProperty("LAST_IMPORT_HEARTBEAT", new Date().getTime());
 
     } finally {
+        lock.releaseLock();
         const end = new Date();
         AHA_LogRuntime3(end - start);
     }
