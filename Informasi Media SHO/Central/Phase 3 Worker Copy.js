@@ -104,6 +104,10 @@ const DASHBOARD_CATEGORY_COL = 39; // Column AM
 const DASHBOARD_WORKER_COL = 40;   // Column AN
 const DASHBOARD_STATUS_COL = 41;   // Column AO
 const DASHBOARD_CONTROL_ROWS = 3;  // Number of rows for Worker 1, 2, 3
+// --- CENTRAL CONFIGURATION ---
+const CONFIG = {
+  FAILURE_LOG_DOC_ID: "1sEqcKalRpWOakM82Ffr-BRNN17ft4wUnv31fSIuQZYw", // <--- THIS WAS MISSING
+};
 
 /**
  * Web App entry point for the Central Sheet.
@@ -644,7 +648,7 @@ function AHA_DeleteTriggerByName3(triggerFunctionName) {
 function AHA_CheckFailedImports3() {
   // --- CONFIGURATION ---
   // This is the ID of your FAILURE LOG SPREADSHEET
-  const FAILURE_LOG_DOC_ID = "1oiJtDXBLIFq_LEa9yypEw7R8ZBfon3mQ6L4i8EqhWDQ"; // This is now a Spreadsheet ID
+  const FAILURE_LOG_DOC_ID = "1sEqcKalRpWOakM82Ffr-BRNN17ft4wUnv31fSIuQZYw"; // This is now a Spreadsheet ID
   const MENTION_USER_ON_ERROR = "<@U08TUF8LW2H>";
   // ---
   

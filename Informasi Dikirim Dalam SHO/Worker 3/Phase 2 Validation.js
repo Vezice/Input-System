@@ -75,7 +75,11 @@ function AHA_StartValidation2() {
 
     // Start the first batch processing run immediately.
     AHA_RunValBatchSafely2();
-
+  } catch (err) {
+    // --- NEW: CATCH CRITICAL STARTUP ERRORS ---
+    const msg = `❌ *CRITICAL SYSTEM FAILURE*: Validation could not start! \n*Reason*: ${err.message} \n${CONFIG.SLACK.MENTION_USER}`;
+    console.error(msg);
+    AHA_SlackNotify3(msg);
   } finally {
     // This block runs whether the function succeeds or fails.
     const end = new Date();

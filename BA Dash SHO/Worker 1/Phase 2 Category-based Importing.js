@@ -321,7 +321,11 @@ function AHA_ImportCategoryBatchInBatches2() {
         }
 
         PropertiesService.getScriptProperties().setProperty("LAST_IMPORT_HEARTBEAT", new Date().getTime());
-
+    } catch (err) {
+      // --- NEW: CATCH TOP-LEVEL IMPORT ERRORS ---
+      const msg = `❌ *CRITICAL IMPORT FAILURE*: The Import Batch Process crashed. \n*Reason*: ${err.message} \n*Stack*: ${err.stack} \n${CONFIG.SLACK.MENTION_USER}`;
+      Logger.log(msg);
+      AHA_SlackNotify3(msg);
     } finally {
         lock.releaseLock();
         const end = new Date();
@@ -441,7 +445,10 @@ function AHA_ProcessAdvancedImport(data, targetSheet, folderName, dataRowIndex, 
     return false; 
 
   } catch (err) {
-    Logger.log(`Error in AHA_ProcessAdvancedImport for ${folderName}: ${err.message}`);
+    // --- NEW: NOTIFY ON PROCESSING LOGIC FAILURE ---
+    const msg = `❌ *Data Processing Error*: Could not process data for brand '${folderName}'. \n*Reason*: ${err.message} \n${CONFIG.SLACK.MENTION_USER}`;
+    Logger.log(msg);
+    AHA_SlackNotify3(msg);
     return false;
   }
 }
