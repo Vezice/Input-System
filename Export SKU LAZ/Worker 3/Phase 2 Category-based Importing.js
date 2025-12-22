@@ -618,11 +618,91 @@ function AHA_ProcessBADashSHOFile(data, targetSheet, logSheet, folderName, dataR
   }
 }
 
+/**
+ * Special processor for BA Dash TIK and BA Dash TOK.
+ * - Gets main data from (dataRowIndex - 4)
+ * - Gets the date (first column) from dataRowIndex
+ * This allows the Type Validation sheet to specify the date row,
+ * and the data row is automatically calculated as 4 rows above it.
+ */
+function AHA_ProcessBADashTIKTOKFile(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap) {
+  try {
+    // dataRowIndex from Type Validation is the DATE row (e.g., row 6)
+    const dateRowIndex = dataRowIndex;
+    // Actual data row is 4 rows above the date row (e.g., row 2)
+    const actualDataRowIndex = dataRowIndex - 4;
+
+    // Convert to 0-based array indices
+    const dateRowArrayIndex = dateRowIndex - 1;
+    const dataRowArrayIndex = actualDataRowIndex - 1;
+
+    // Validate row indices
+    if (dataRowArrayIndex < 0 || dataRowArrayIndex >= data.length) return false;
+    if (dateRowArrayIndex < 0 || dateRowArrayIndex >= data.length) return false;
+
+    const sourceRow = data[dataRowArrayIndex];
+    const dateRow = data[dateRowArrayIndex];
+
+    // Check if data row is empty
+    if (!sourceRow || !sourceRow.some(cell => (cell || "").toString().trim() !== "")) return false;
+
+    const transformedRow = [];
+    const sourceHeaderList = Array.from(sourceHeaderMap.keys());
+
+    for (const standardHeader of standardHeaders) {
+      const standardHeaderLower = standardHeader.toLowerCase().trim();
+      let value = '';
+
+      // Check 1: Simple 1-to-1 match
+      if (sourceHeaderMap.has(standardHeaderLower)) {
+        const idx = sourceHeaderMap.get(standardHeaderLower)[0];
+        value = sourceRow[idx];
+      }
+      // Check 2: Special rules
+      else if (specialRules[standardHeader]) {
+        const rule = specialRules[standardHeader];
+        const action = rule.action;
+        const pattern = (rule.replacements[0] || "").toLowerCase().trim();
+
+        if (pattern && action === "COALESCE_STARTS_WITH") {
+          const matchingHeaders = sourceHeaderList.filter(h => h.startsWith(pattern));
+          if (matchingHeaders.length > 0) {
+            const idx = sourceHeaderMap.get(matchingHeaders[0])[0];
+            value = sourceRow[idx];
+          }
+        }
+      }
+      transformedRow.push(value);
+    }
+
+    // Override the first column (date) with value from the date row
+    // The date is in the first column (index 0) of the date row
+    if (dateRow && dateRow.length > 0) {
+      transformedRow[0] = dateRow[0];
+    }
+
+    // Truncate date if it's a long string (similar to original logic)
+    if (typeof transformedRow[0] === 'string' && transformedRow[0].length > 10) {
+      transformedRow[0] = transformedRow[0].substring(0, 10);
+    }
+
+    // Write to sheet
+    const targetRow = targetSheet.getLastRow() + 1;
+    targetSheet.getRange(targetRow, 1).setValue(folderName);
+    targetSheet.getRange(targetRow, 2, 1, transformedRow.length).setValues([transformedRow]);
+    return true;
+
+  } catch (err) {
+    Logger.log(`Error processing BA Dash TIK/TOK for ${folderName}: ${err.message}`);
+    return false;
+  }
+}
+
 function AHA_ProcessBADashTIKFile(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap) {
-  return AHA_ProcessSingleRowReport(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap);
+  return AHA_ProcessBADashTIKTOKFile(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap);
 }
 function AHA_ProcessBADashTOKFile(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap) {
-  return AHA_ProcessSingleRowReport(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap);
+  return AHA_ProcessBADashTIKTOKFile(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap);
 }
 
 function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataRowIndex, standardHeaders, specialRules, sourceHeaderMap) {
