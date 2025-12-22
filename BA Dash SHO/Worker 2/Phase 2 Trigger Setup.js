@@ -61,17 +61,75 @@ function AHA_InstallTrigger2() {
 }
 
 
+/**
+ * Checks if all temporary sheets are ready by reading the TempControl sheet.
+ * @returns {boolean} True if all temp sheets have "Done" status, false otherwise.
+ */
+function AHA_AreTempSheetsReady2() {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const controlSheet = ss.getSheetByName("TempControl");
+
+    if (!controlSheet) {
+      Logger.log("TempControl sheet not found. Assuming not ready.");
+      return false;
+    }
+
+    const lastRow = controlSheet.getLastRow();
+    if (lastRow < 2) {
+      Logger.log("TempControl sheet is empty. Assuming not ready.");
+      return false;
+    }
+
+    const data = controlSheet.getRange(2, 1, lastRow - 1, 2).getValues();
+
+    for (const row of data) {
+      const sheetName = row[0];
+      const status = row[1];
+      if (sheetName && status !== "Done") {
+        Logger.log(`Temp sheet "${sheetName}" is not ready. Status: ${status}`);
+        return false;
+      }
+    }
+
+    return true; // All sheets are "Done"
+  } catch (e) {
+    Logger.log(`Error checking temp sheet status: ${e.message}`);
+    return false;
+  }
+}
+
 function AHA_StartImport2() {
   const start = new Date();
   try {
+    // --- NEW: Wait for temp sheets to be ready before importing ---
+    if (!AHA_AreTempSheetsReady2()) {
+      AHA_SlackNotify3("⏳ Waiting for temp sheets to be created before importing...");
+
+      // Delete any existing retry triggers to prevent duplicates
+      AHA_DeleteTriggers2("AHA_StartImport2");
+
+      // Create a trigger to retry after 30 seconds
+      ScriptApp.newTrigger("AHA_StartImport2")
+        .timeBased()
+        .after(30 * 1000) // 30 seconds
+        .create();
+
+      return; // Exit and wait for retry
+    }
+    // --- END NEW ---
+
+    // Clean up any leftover retry triggers
+    AHA_DeleteTriggers2("AHA_StartImport2");
+
     PropertiesService.getScriptProperties().deleteProperty("RESTART_COUNT_VALIDATING");
     PropertiesService.getScriptProperties().setProperty('SYSTEM_STATUS', 'IMPORTING');
-    
+
     // --- NEW: Set the initial import heartbeat ---
     PropertiesService.getScriptProperties().setProperty("LAST_IMPORT_HEARTBEAT", new Date().getTime());
-    
-    AHA_SlackNotify3("⚠️ *Starting Import...* Status: IMPORTING");
-    
+
+    AHA_SlackNotify3("✅ *Temp sheets ready!* Starting Import... Status: IMPORTING");
+
     AHA_InstallTrigger2();
     AHA_SortValidationList2();
 

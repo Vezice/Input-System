@@ -672,11 +672,16 @@ function AHA_CheckFailedImports3() {
     const filesInFolder = new Map();
     while (files.hasNext()) {
       const file = files.next();
-      filesInFolder.set(file.getName(), file.getDateCreated());
+      const fileName = file.getName();
+      // Exclude FAILURE_LOG from the count - it's a permanent log file, not a failed import
+      if (fileName === "FAILURE_LOG") {
+        continue;
+      }
+      filesInFolder.set(fileName, file.getDateCreated());
     }
 
     if (filesInFolder.size === 0) {
-      AHA_SlackNotify3(`✅ The central 'Failed' folder is empty. All good!`);
+      AHA_SlackNotify3(`✅ Import process complete! No failed files detected.`);
       return;
     }
 
@@ -728,7 +733,8 @@ function AHA_CheckFailedImports3() {
     // --- END OF FIX ---
 
     // --- Build the Smart Slack Message ---
-    let message = `🚨 *Failed Imports Report!* ${filesInFolder.size} file(s) are in the 'Failed' folder:\n\n`;
+    // Tag admin since there are actual failed files that need attention
+    let message = `🚨 *Failed Imports Report!* ${filesInFolder.size} file(s) are in the 'Failed' folder: ${MENTION_USER_ON_ERROR}\n\n`;
     const filesWithLogs = [];
     const filesWithoutLogs = [];
 
