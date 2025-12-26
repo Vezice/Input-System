@@ -186,6 +186,8 @@ function AHA_SystemWatchdog() {
         Logger.log(`CRITICAL: VALIDATING stage has been stale for 10+ minutes and failed ${restartCount} restarts. Triggering quarantine.`);
         AHA_SlackNotify3(`🚨 *CRITICAL FAILURE*: System is STALE. Restart attempts failed. Triggering "Poison Pill" Quarantine. <@U08TUF8LW2H>`);
         AHA_QuarantinePoisonPill(); // This is the function from our previous discussion
+        // Clear stale folder ID to prevent "Invalid argument: id" errors
+        properties.deleteProperty("MOVE_FOLDER_ID");
         AHA_StartValTrigger2(1);    // Restart *after* quarantining
       } else {
         // --- RESTART ---
@@ -193,6 +195,8 @@ function AHA_SystemWatchdog() {
         properties.setProperty("RESTART_COUNT_VALIDATING", newCount);
         // Force-delete any lingering triggers, just in case
         AHA_DeleteTriggers2("AHA_RunValBatchSafely2");
+        // Clear stale folder ID to prevent "Invalid argument: id" errors on restart
+        properties.deleteProperty("MOVE_FOLDER_ID");
         AHA_SlackNotify3(`⚠️ *Watchdog Alert*: System is STALE (no heartbeat in 30 min). Restarting... (Attempt ${newCount}/${MAX_RESTARTS})`);
         AHA_StartValTrigger2(1); // Restart the process
       }

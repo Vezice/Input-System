@@ -309,6 +309,15 @@ function AHA_ValidationBatch2() {
         if (!inputSheet) throw new Error(`Sheet '${CONFIG.SHEET_NAMES.INPUT}' not found.`);
 
         const moveFolderId = PropertiesService.getScriptProperties().getProperty("MOVE_FOLDER_ID");
+
+        // Guard: If folder ID is missing or invalid, restart the validation process properly
+        if (!moveFolderId) {
+            AHA_SlackNotify3("⚠️ Move folder ID is missing. Restarting validation from the beginning...");
+            AHA_RemoveValTriggers2("AHA_RunValBatchSafely2");
+            AHA_StartValidation2();
+            return;
+        }
+
         const folder = DriveApp.getFolderById(moveFolderId);
         if (!folder) throw new Error(`Move folder not found by ID: ${moveFolderId}.`);
 
