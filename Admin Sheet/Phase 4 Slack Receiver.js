@@ -137,6 +137,22 @@ function processAndForwardCommand(e) {
         sendSlackResponse(payloadParams.response_url, `📊 *iBot Dashboard*\n\n${dashboardUrl}`);
         break;
 
+      case 'help':
+        handleHelpCommand(payloadParams.response_url);
+        break;
+
+      case 'status':
+        handleStatusCommand(payloadParams.response_url);
+        break;
+
+      case 'history':
+        handleHistoryCommand(payloadParams.response_url);
+        break;
+
+      case 'validateall':
+        handleValidateAllCommand(payloadParams.response_url);
+        break;
+
       default:
         // If no other command matches, assume it's a category to be forwarded.
         const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(linksSheetName);
@@ -463,4 +479,298 @@ function handleBrandValidation(responseUrl, commandInput) {
 }
 
 
+/**
+ * Handles the /ibot help command - shows all available commands
+ */
+function handleHelpCommand(responseUrl) {
+  const helpText = `📖 *iBot Command Reference*
 
+*Import Commands:*
+• \`/ibot [category]\` - Start import for a category (e.g., \`/ibot BA Produk SHO\`)
+
+*Validation Commands:*
+• \`/ibot validate [category]\` - Validate brands for a category
+• \`/ibot validate [BA Dash category] [range]\` - Validate with date range (yesterday, L7D, L30D)
+• \`/ibot validateall\` - Validate all categories at once
+
+*Check Commands:*
+• \`/ibot check move\` - Check files in Move folder
+• \`/ibot check failed\` - Check files in Failed folder
+• \`/ibot check other\` - Check files in other folders
+
+*Info Commands:*
+• \`/ibot status\` - System health check
+• \`/ibot history\` - Recent import activities
+• \`/ibot dashboard\` - Get dashboard link
+• \`/ibot help\` - Show this help message
+• \`/ibot test\` - Test bot connectivity`;
+
+  sendSlackResponse(responseUrl, helpText);
+}
+
+
+/**
+ * Handles the /ibot status command - shows system health
+ */
+function handleStatusCommand(responseUrl) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const listSheet = ss.getSheetByName("List");
+    const dashboardSheet = ss.getSheetByName("Dashboard");
+
+    let message = `🔧 *iBot System Status*\n\n`;
+
+    // Count active triggers
+    const triggers = ScriptApp.getProjectTriggers();
+    message += `*Active Triggers:* ${triggers.length}\n`;
+
+    // Get category count from List sheet
+    if (listSheet) {
+      const categoryCount = listSheet.getLastRow() - 1;
+      message += `*Categories Configured:* ${categoryCount}\n`;
+    }
+
+    // Check Dashboard for recent activity
+    if (dashboardSheet) {
+      // Find categories with recent imports (last 24 hours)
+      const data = dashboardSheet.getRange("A6:C30").getValues();
+      let recentImports = 0;
+      let failedImports = 0;
+      const now = new Date();
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+      for (const row of data) {
+        const category = row[0];
+        const lastImport = row[1];
+        const status = row[2];
+
+        if (category && lastImport instanceof Date && lastImport > oneDayAgo) {
+          recentImports++;
+          if (status === "Failed") failedImports++;
+        }
+      }
+
+      message += `*Imports (Last 24h):* ${recentImports}\n`;
+      if (failedImports > 0) {
+        message += `*Failed Imports:* ${failedImports} ⚠️\n`;
+      }
+    }
+
+    // Check for stuck files
+    const ROOT_DRIVE_FOLDER_ID = '0AJyZWtXd1795Uk9PVA';
+    try {
+      const rootFolder = DriveApp.getFolderById(ROOT_DRIVE_FOLDER_ID);
+
+      // Check Move folder
+      const moveFolders = rootFolder.getFoldersByName('Move');
+      let moveFileCount = 0;
+      if (moveFolders.hasNext()) {
+        const moveFolder = moveFolders.next();
+        moveFileCount = countFilesRecursively(moveFolder);
+      }
+
+      // Check Failed folder
+      const failedFolders = rootFolder.getFoldersByName('Failed');
+      let failedFileCount = 0;
+      if (failedFolders.hasNext()) {
+        const failedFolder = failedFolders.next();
+        failedFileCount = countFilesRecursively(failedFolder);
+      }
+
+      message += `\n*Pending Files:*\n`;
+      message += `• Move folder: ${moveFileCount} files\n`;
+      message += `• Failed folder: ${failedFileCount} files`;
+
+      if (moveFileCount > 0 || failedFileCount > 0) {
+        message += `\n\n💡 Use \`/ibot check move\` or \`/ibot check failed\` for details.`;
+      }
+    } catch (driveError) {
+      message += `\n⚠️ Could not check Drive folders.`;
+    }
+
+    sendSlackResponse(responseUrl, message);
+
+  } catch (e) {
+    sendSlackResponse(responseUrl, `❌ Error getting status: ${e.message}`);
+  }
+}
+
+
+/**
+ * Helper function to count files recursively in a folder
+ */
+function countFilesRecursively(folder) {
+  let count = 0;
+
+  const files = folder.getFiles();
+  while (files.hasNext()) {
+    files.next();
+    count++;
+  }
+
+  const subFolders = folder.getFolders();
+  while (subFolders.hasNext()) {
+    count += countFilesRecursively(subFolders.next());
+  }
+
+  return count;
+}
+
+
+/**
+ * Handles the /ibot history command - shows recent import activities
+ */
+function handleHistoryCommand(responseUrl) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const dashboardSheet = ss.getSheetByName("Dashboard");
+
+    if (!dashboardSheet) {
+      sendSlackResponse(responseUrl, "❌ Dashboard sheet not found. Run `AHA_SetupDashboard()` first.");
+      return;
+    }
+
+    // Find the log section
+    const allData = dashboardSheet.getRange("A1:E50").getValues();
+    let logStartRow = -1;
+
+    for (let i = 0; i < allData.length; i++) {
+      if (allData[i][0] === "Recent Activity Log") {
+        logStartRow = i + 2; // Skip header row
+        break;
+      }
+    }
+
+    if (logStartRow === -1) {
+      sendSlackResponse(responseUrl, "❌ Activity log not found in Dashboard.");
+      return;
+    }
+
+    let message = `📜 *Recent Activity (Last 10)*\n\n`;
+    let activityCount = 0;
+
+    for (let i = logStartRow; i < allData.length && activityCount < 10; i++) {
+      const timestamp = allData[i][0];
+      const category = allData[i][1];
+      const action = allData[i][2];
+      const details = allData[i][3];
+      const status = allData[i][4];
+
+      if (!timestamp || !category) continue;
+
+      const timeStr = timestamp instanceof Date
+        ? Utilities.formatDate(timestamp, "Asia/Jakarta", "dd/MM HH:mm")
+        : timestamp;
+
+      const statusIcon = status === "Success" ? "✅" : status === "Failed" ? "❌" : "⚠️";
+      message += `${statusIcon} \`${timeStr}\` *${category}*\n    ${action}: ${details}\n`;
+      activityCount++;
+    }
+
+    if (activityCount === 0) {
+      message += "_No recent activity found._";
+    }
+
+    sendSlackResponse(responseUrl, message);
+
+  } catch (e) {
+    sendSlackResponse(responseUrl, `❌ Error getting history: ${e.message}`);
+  }
+}
+
+
+/**
+ * Handles the /ibot validateall command - validates all categories
+ */
+function handleValidateAllCommand(responseUrl) {
+  try {
+    sendSlackResponse(responseUrl, "🔍 Starting validation for all categories... This may take a few minutes.");
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const listSheet = ss.getSheetByName("List");
+
+    if (!listSheet) {
+      sendSlackResponse(responseUrl, "❌ List sheet not found.");
+      return;
+    }
+
+    // Get admin sheet for brand master
+    const adminSS = SpreadsheetApp.openById(BRAND_VALIDATION_CONFIG.ADMIN_SHEET_ID);
+    const brandMasterSheet = adminSS.getSheetByName("Brand Master");
+
+    if (!brandMasterSheet) {
+      sendSlackResponse(responseUrl, "❌ Brand Master sheet not found. Run `AHA_SetupDashboard()` first.");
+      return;
+    }
+
+    // Get all categories from List sheet
+    const listData = listSheet.getRange(2, 1, listSheet.getLastRow() - 1, 6).getValues();
+
+    const results = [];
+    let totalCategories = 0;
+    let categoriesWithMissing = 0;
+    let totalMissing = 0;
+
+    for (const row of listData) {
+      const category = (row[0] || "").toString().trim();
+      const centralSheetId = row[5]; // Column F
+
+      if (!category || !centralSheetId) continue;
+
+      // Extract marketplace code
+      const marketplaceCode = category.slice(-3).toUpperCase();
+      if (!["SHO", "LAZ", "TIK", "TOK"].includes(marketplaceCode)) continue;
+
+      totalCategories++;
+
+      try {
+        const isBADash = category.toLowerCase().startsWith("ba dash");
+        let result;
+
+        if (isBADash) {
+          result = AHA_ValidateBADashBrands(category, centralSheetId, marketplaceCode, "L7D");
+          if (result.success && !result.skipped) {
+            if (result.datesWithMissing > 0) {
+              categoriesWithMissing++;
+              results.push(`⚠️ *${category}*: ${result.datesWithMissing}/${result.totalDates} days with missing brands`);
+            } else {
+              results.push(`✅ *${category}*: All brands found (L7D)`);
+            }
+          } else if (result.skipped) {
+            results.push(`⚪ *${category}*: Skipped - ${result.reason}`);
+          }
+        } else {
+          result = AHA_ValidateBrands(category, centralSheetId, marketplaceCode);
+          if (result.success && !result.skipped) {
+            if (result.missingCount > 0) {
+              categoriesWithMissing++;
+              totalMissing += result.missingCount;
+              results.push(`⚠️ *${category}*: ${result.missingCount} missing (${result.foundCount}/${result.expectedCount})`);
+            } else {
+              results.push(`✅ *${category}*: All ${result.expectedCount} brands found`);
+            }
+          } else if (result.skipped) {
+            results.push(`⚪ *${category}*: Skipped - ${result.reason}`);
+          }
+        }
+      } catch (catError) {
+        results.push(`❌ *${category}*: Error - ${catError.message}`);
+      }
+
+      // Rate limit
+      Utilities.sleep(500);
+    }
+
+    // Build summary message
+    let message = `📊 *Validation Complete - All Categories*\n\n`;
+    message += `*Summary:* ${totalCategories} categories checked\n`;
+    message += `*Issues Found:* ${categoriesWithMissing} categories with missing brands\n\n`;
+    message += `*Results:*\n`;
+    message += results.join("\n");
+
+    sendSlackResponse(responseUrl, message);
+
+  } catch (e) {
+    sendSlackResponse(responseUrl, `❌ Error during validation: ${e.message}`);
+  }
+}
