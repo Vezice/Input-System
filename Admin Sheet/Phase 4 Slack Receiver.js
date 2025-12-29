@@ -328,15 +328,17 @@ function handleBrandValidation(responseUrl, categoryInput) {
       return;
     }
 
-    // Find the category in the List sheet and get the Central Sheet ID
-    const listData = listSheet.getRange(2, 1, listSheet.getLastRow() - 1, 2).getValues();
+    // List sheet columns:
+    // A: Category/Type, B: Role, C: Link, D: Apps Script, E: Upload Folder,
+    // F: Spreadsheet ID, G: Apps Script Deployment URL, H: Slack Webhook URL, I: Deployment ID
+    const listData = listSheet.getRange(2, 1, listSheet.getLastRow() - 1, 6).getValues();
     let centralSheetId = null;
     let matchedCategory = null;
 
     for (const row of listData) {
       const category = (row[0] || "").toString().trim();
       if (category.toLowerCase() === categoryInput.toLowerCase()) {
-        centralSheetId = row[1]; // Column B contains Central Sheet ID
+        centralSheetId = row[5]; // Column F (index 5) contains Spreadsheet ID
         matchedCategory = category;
         break;
       }
@@ -347,10 +349,17 @@ function handleBrandValidation(responseUrl, categoryInput) {
       return;
     }
 
-    sendSlackResponse(responseUrl, `🔍 Starting brand validation for *${matchedCategory}*...`);
+    // Extract marketplace code from category name (last 3 characters: SHO, LAZ, TIK, TOK)
+    const marketplaceCode = matchedCategory.slice(-3).toUpperCase();
+    if (!["SHO", "LAZ", "TIK", "TOK"].includes(marketplaceCode)) {
+      sendSlackResponse(responseUrl, `⚠️ Could not determine marketplace code from "${matchedCategory}". Expected ending: SHO, LAZ, TIK, or TOK.`);
+      return;
+    }
 
-    // Run the validation
-    const result = AHA_ValidateBrands(matchedCategory, centralSheetId);
+    sendSlackResponse(responseUrl, `🔍 Starting brand validation for *${matchedCategory}* (Marketplace: ${marketplaceCode})...`);
+
+    // Run the validation with marketplace code
+    const result = AHA_ValidateBrands(matchedCategory, centralSheetId, marketplaceCode);
 
     if (!result.success) {
       sendSlackResponse(responseUrl, `❌ Validation failed: ${result.error}`);
@@ -364,6 +373,7 @@ function handleBrandValidation(responseUrl, categoryInput) {
 
     // Build response message
     let message = `📊 *Brand Validation Complete - ${matchedCategory}*\n\n`;
+    message += `Marketplace: *${marketplaceCode}*\n`;
     message += `Expected Brands: *${result.expectedCount}*\n`;
     message += `Found Brands: *${result.foundCount}*\n`;
     message += `Missing Brands: *${result.missingCount}*\n`;

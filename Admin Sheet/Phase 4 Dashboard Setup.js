@@ -195,28 +195,39 @@ function setupBrandValidationSheet(sheet) {
 
 /**
  * Sets up the Brand Master sheet with IMPORTRANGE placeholder
+ * Structure: Column A = Marketplace Code (SHO, LAZ, TIK, TOK), Column B = Brand Code
  */
 function setupBrandMasterSheet(sheet) {
   sheet.clear();
 
   // Instructions
   sheet.getRange("A1").setValue("Brand Master List").setFontSize(18).setFontWeight("bold");
-  sheet.getRange("A2").setValue('=IMPORTRANGE("YOUR_SPREADSHEET_ID_HERE", "Sheet1!A:A")').setFontStyle("italic").setFontColor("#666666");
   sheet.getRange("A3").setValue("Instructions:").setFontWeight("bold");
-  sheet.getRange("A4").setValue("1. Replace the formula in A2 with your actual IMPORTRANGE");
-  sheet.getRange("A5").setValue("2. Format: =IMPORTRANGE(\"spreadsheet_id\", \"SheetName!A:A\")");
-  sheet.getRange("A6").setValue("3. The brand codes should be in Column A starting from row 2");
-  sheet.getRange("A7").setValue("4. You may need to authorize the IMPORTRANGE connection first");
+  sheet.getRange("A4").setValue("1. Replace the formula in row 10 with your actual IMPORTRANGE");
+  sheet.getRange("A5").setValue("2. Format: =IMPORTRANGE(\"spreadsheet_id\", \"SheetName!A:B\")");
+  sheet.getRange("A6").setValue("3. Column A = Marketplace Code (SHO, LAZ, TIK, TOK)");
+  sheet.getRange("A7").setValue("4. Column B = Brand Code");
+  sheet.getRange("A8").setValue("5. You may need to authorize the IMPORTRANGE connection first");
 
-  // Header for brand list
-  sheet.getRange("A9").setValue("Brand Code").setFontWeight("bold").setBackground("#e8eaed");
+  // Headers for brand list
+  sheet.getRange("A9").setValue("Marketplace Code").setFontWeight("bold").setBackground("#e8eaed");
+  sheet.getRange("B9").setValue("Brand Code").setFontWeight("bold").setBackground("#e8eaed");
 
-  // Placeholder data
-  sheet.getRange("A10").setValue("(Brands will appear here after IMPORTRANGE is configured)").setFontStyle("italic").setFontColor("#999999");
+  // Placeholder IMPORTRANGE formula (as text, user will convert to formula)
+  sheet.getRange("A10").setValue('=IMPORTRANGE("YOUR_SPREADSHEET_ID_HERE", "SheetName!A:B")').setFontStyle("italic").setFontColor("#666666");
 
-  sheet.setColumnWidth(1, 300);
+  // Example data structure (will be replaced by IMPORTRANGE)
+  sheet.getRange("A11").setValue("(Example: SHO)").setFontStyle("italic").setFontColor("#999999");
+  sheet.getRange("B11").setValue("(Example: BRAND_A)").setFontStyle("italic").setFontColor("#999999");
+  sheet.getRange("A12").setValue("(Example: LAZ)").setFontStyle("italic").setFontColor("#999999");
+  sheet.getRange("B12").setValue("(Example: BRAND_A)").setFontStyle("italic").setFontColor("#999999");
+  sheet.getRange("A13").setValue("(Example: TIK)").setFontStyle("italic").setFontColor("#999999");
+  sheet.getRange("B13").setValue("(Example: BRAND_B)").setFontStyle("italic").setFontColor("#999999");
 
-  Logger.log("Brand Master sheet configured with IMPORTRANGE placeholder");
+  sheet.setColumnWidth(1, 150);
+  sheet.setColumnWidth(2, 200);
+
+  Logger.log("Brand Master sheet configured with Marketplace Code + Brand Code structure");
 }
 
 

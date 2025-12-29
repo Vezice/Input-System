@@ -19,10 +19,11 @@ const BRAND_VALIDATION_CONFIG = {
  *
  * @param {string} category - The category that was just imported
  * @param {string} centralSheetId - The ID of the Central sheet containing imported data
+ * @param {string} marketplaceCode - The marketplace code (SHO, LAZ, TIK, TOK)
  */
-function AHA_ValidateBrands(category, centralSheetId) {
+function AHA_ValidateBrands(category, centralSheetId, marketplaceCode) {
   try {
-    Logger.log(`Starting brand validation for ${category}`);
+    Logger.log(`Starting brand validation for ${category} (Marketplace: ${marketplaceCode})`);
 
     // Get the Admin sheet for brand master list
     const adminSS = SpreadsheetApp.openById(BRAND_VALIDATION_CONFIG.ADMIN_SHEET_ID);
@@ -33,11 +34,11 @@ function AHA_ValidateBrands(category, centralSheetId) {
       return { success: false, error: "Brand Master sheet not found" };
     }
 
-    // Get expected brands from Brand Master (Column A, starting row 10)
-    const expectedBrands = getBrandMasterList(brandMasterSheet);
+    // Get expected brands from Brand Master, filtered by marketplace code
+    const expectedBrands = getBrandMasterList(brandMasterSheet, marketplaceCode);
     if (expectedBrands.length === 0) {
-      Logger.log("No brands found in Brand Master list. Skipping validation.");
-      return { success: true, skipped: true, reason: "No master brand list" };
+      Logger.log(`No brands found in Brand Master for marketplace ${marketplaceCode}. Skipping validation.`);
+      return { success: true, skipped: true, reason: `No brands for ${marketplaceCode} in master list` };
     }
 
     // Get imported brands from the Central sheet's category tab
@@ -91,22 +92,35 @@ function AHA_ValidateBrands(category, centralSheetId) {
 
 
 /**
- * Gets the master brand list from the Brand Master sheet
+ * Gets the master brand list from the Brand Master sheet, filtered by marketplace code
+ * Brand Master structure: Column A = Marketplace Code, Column B = Brand Code
+ * Data starts at row 10 (row 9 is header)
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - The Brand Master sheet
+ * @param {string} marketplaceCode - The marketplace code to filter by (SHO, LAZ, TIK, TOK)
+ * @returns {string[]} Array of brand codes for the specified marketplace
  */
-function getBrandMasterList(sheet) {
+function getBrandMasterList(sheet, marketplaceCode) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 10) return []; // No data yet (header is at row 9)
 
-  const data = sheet.getRange(10, 1, lastRow - 9, 1).getValues();
+  // Get both columns: A (Marketplace Code) and B (Brand Code)
+  const data = sheet.getRange(10, 1, lastRow - 9, 2).getValues();
   const brands = [];
 
   for (const row of data) {
-    const brand = (row[0] || "").toString().trim();
-    if (brand && !brand.startsWith("(") && brand !== "") {
-      brands.push(brand.toUpperCase()); // Normalize to uppercase for comparison
+    const rowMarketplace = (row[0] || "").toString().trim().toUpperCase();
+    const brandCode = (row[1] || "").toString().trim();
+
+    // Filter by marketplace code and skip placeholder/example rows
+    if (rowMarketplace === marketplaceCode.toUpperCase() &&
+        brandCode !== "" &&
+        !brandCode.startsWith("(")) {
+      brands.push(brandCode.toUpperCase()); // Normalize to uppercase for comparison
     }
   }
 
+  Logger.log(`Found ${brands.length} brands for marketplace ${marketplaceCode}`);
   return brands;
 }
 
@@ -217,8 +231,9 @@ function sendMissingBrandsAlert(category, expectedCount, foundCount, missingBran
 function testBrandValidation() {
   const testCategory = "BA Produk SHO"; // Change as needed
   const testCentralSheetId = "YOUR_CENTRAL_SHEET_ID"; // Replace with actual ID
+  const testMarketplaceCode = "SHO"; // Extracted from category name
 
-  const result = AHA_ValidateBrands(testCategory, testCentralSheetId);
+  const result = AHA_ValidateBrands(testCategory, testCentralSheetId, testMarketplaceCode);
   Logger.log(JSON.stringify(result, null, 2));
 }
 
@@ -228,18 +243,8 @@ function testBrandValidation() {
  * Useful for a daily scheduled check
  */
 function AHA_ValidateAllBrands() {
-  const categories = [
-    { name: "BA Dash LAZ", centralId: "" },
-    { name: "BA Dash SHO", centralId: "" },
-    { name: "BA Dash TIK", centralId: "" },
-    { name: "BA Dash TOK", centralId: "" },
-    { name: "BA Produk LAZ", centralId: "" },
-    { name: "BA Produk SHO", centralId: "" },
-    { name: "BA Produk TIK", centralId: "" },
-    // Add more categories with their Central Sheet IDs
-  ];
-
   // Get Central Sheet IDs from List sheet
+  // List columns: A: Category, F: Spreadsheet ID (index 5)
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const listSheet = ss.getSheetByName("List");
   if (!listSheet) {
@@ -247,35 +252,44 @@ function AHA_ValidateAllBrands() {
     return;
   }
 
-  const listData = listSheet.getRange(2, 1, listSheet.getLastRow() - 1, 7).getValues();
-  const categoryToId = {};
-
-  for (const row of listData) {
-    const category = row[0]; // Column A
-    const sheetId = row[1]; // Column B (adjust if different)
-    if (category && sheetId) {
-      categoryToId[category] = sheetId;
-    }
-  }
+  const listData = listSheet.getRange(2, 1, listSheet.getLastRow() - 1, 6).getValues();
 
   // Validate each category
   let totalMissing = 0;
   const results = [];
 
-  for (const cat of categories) {
-    const centralId = categoryToId[cat.name];
-    if (centralId) {
-      const result = AHA_ValidateBrands(cat.name, centralId);
-      if (result.missingCount > 0) {
-        totalMissing += result.missingCount;
-        results.push(`${cat.name}: ${result.missingCount} missing`);
-      }
+  for (const row of listData) {
+    const category = (row[0] || "").toString().trim();
+    const centralId = row[5]; // Column F = Spreadsheet ID
+
+    if (!category || !centralId) continue;
+
+    // Extract marketplace code from category name (last 3 characters)
+    const marketplaceCode = category.slice(-3).toUpperCase();
+    if (!["SHO", "LAZ", "TIK", "TOK"].includes(marketplaceCode)) {
+      Logger.log(`Skipping ${category} - no valid marketplace code`);
+      continue;
     }
+
+    try {
+      const result = AHA_ValidateBrands(category, centralId, marketplaceCode);
+      if (result.success && result.missingCount > 0) {
+        totalMissing += result.missingCount;
+        results.push(`${category}: ${result.missingCount} missing`);
+      }
+    } catch (e) {
+      Logger.log(`Error validating ${category}: ${e.message}`);
+    }
+
+    // Rate limit protection
+    Utilities.sleep(1000);
   }
 
   // Send summary to Slack if there are missing brands
   if (totalMissing > 0) {
     sendValidationSummary(results, totalMissing);
+  } else {
+    Logger.log("All categories validated - no missing brands");
   }
 }
 
