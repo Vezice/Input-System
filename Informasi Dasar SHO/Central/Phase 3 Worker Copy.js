@@ -619,6 +619,14 @@ function AHA_FinalizeMerge3(category, tempSheetName) {
   AHA_SlackNotify3(`📊 *Dashboard Update*: Status for category *${category}* set to 'Imported'.`);
   
   controlSheet.getRange("A1").setValue("SCRIPT OFFLINE");
+
+  // Export to BigQuery (non-blocking, controlled by BIGQUERY_ENABLED property)
+  try {
+    AHA_ExportToBigQuery3(category);
+  } catch (bqError) {
+    Logger.log(`BigQuery export failed (non-fatal): ${bqError.message}`);
+  }
+
   AHA_CheckFailedImports3();
 }
 
