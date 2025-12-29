@@ -314,11 +314,19 @@ function handleOtherFoldersCheck(responseUrl, rootFolderId) {
 
 /**
  * Handles brand validation for a specific category via Slack command.
- * Looks up the Central Sheet ID and runs validation.
+ * Supports optional date range for BA Dash categories.
+ *
+ * Command formats:
+ * - /ibot validate BA Produk SHO         → Standard validation
+ * - /ibot validate BA Dash SHO           → BA Dash with L7D (default)
+ * - /ibot validate BA Dash SHO L7D       → BA Dash with explicit range
+ * - /ibot validate BA Dash SHO yesterday → BA Dash yesterday only
+ * - /ibot validate BA Dash SHO L30D      → BA Dash last 30 days
+ *
  * @param {string} responseUrl The Slack response URL.
- * @param {string} categoryInput The category name from the Slack command.
+ * @param {string} commandInput The full command input after "validate".
  */
-function handleBrandValidation(responseUrl, categoryInput) {
+function handleBrandValidation(responseUrl, commandInput) {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const listSheet = ss.getSheetByName("List");
@@ -326,6 +334,22 @@ function handleBrandValidation(responseUrl, categoryInput) {
     if (!listSheet) {
       sendSlackResponse(responseUrl, "❌ List sheet not found in Admin Sheet.");
       return;
+    }
+
+    // Parse command input - check for date range at the end
+    const validDateRanges = ["yesterday", "l7d", "l30d"];
+    const inputParts = commandInput.trim().split(/\s+/);
+    let dateRange = null;
+    let categoryInput = commandInput.trim();
+
+    // Check if last part is a date range
+    if (inputParts.length > 1) {
+      const lastPart = inputParts[inputParts.length - 1].toLowerCase();
+      if (validDateRanges.includes(lastPart)) {
+        dateRange = lastPart.toUpperCase();
+        if (dateRange === "YESTERDAY") dateRange = "yesterday";
+        categoryInput = inputParts.slice(0, -1).join(" ");
+      }
     }
 
     // List sheet columns:
@@ -356,38 +380,82 @@ function handleBrandValidation(responseUrl, categoryInput) {
       return;
     }
 
-    sendSlackResponse(responseUrl, `🔍 Starting brand validation for *${matchedCategory}* (Marketplace: ${marketplaceCode})...`);
+    // Check if this is a BA Dash category (requires date-based validation)
+    const isBADash = matchedCategory.toLowerCase().startsWith("ba dash");
 
-    // Run the validation with marketplace code
-    const result = AHA_ValidateBrands(matchedCategory, centralSheetId, marketplaceCode);
+    if (isBADash) {
+      // BA Dash categories use date-based validation
+      dateRange = dateRange || "L7D"; // Default to L7D
+      sendSlackResponse(responseUrl, `🔍 Starting BA Dash validation for *${matchedCategory}* (${dateRange})...`);
 
-    if (!result.success) {
-      sendSlackResponse(responseUrl, `❌ Validation failed: ${result.error}`);
-      return;
-    }
+      const result = AHA_ValidateBADashBrands(matchedCategory, centralSheetId, marketplaceCode, dateRange);
 
-    if (result.skipped) {
-      sendSlackResponse(responseUrl, `⚠️ Validation skipped: ${result.reason}`);
-      return;
-    }
+      if (!result.success) {
+        sendSlackResponse(responseUrl, `❌ Validation failed: ${result.error}`);
+        return;
+      }
 
-    // Build response message
-    let message = `📊 *Brand Validation Complete - ${matchedCategory}*\n\n`;
-    message += `Marketplace: *${marketplaceCode}*\n`;
-    message += `Expected Brands: *${result.expectedCount}*\n`;
-    message += `Found Brands: *${result.foundCount}*\n`;
-    message += `Missing Brands: *${result.missingCount}*\n`;
+      if (result.skipped) {
+        sendSlackResponse(responseUrl, `⚠️ Validation skipped: ${result.reason}`);
+        return;
+      }
 
-    if (result.missingCount > 0) {
-      const missingList = result.missingBrands.length <= 10
-        ? result.missingBrands.join(", ")
-        : result.missingBrands.slice(0, 10).join(", ") + ` ... and ${result.missingBrands.length - 10} more`;
-      message += `\n*Missing:* ${missingList}`;
+      // Build BA Dash response with per-date breakdown
+      let message = `📊 *Brand Validation - ${matchedCategory}* (${dateRange})\n`;
+      message += `Marketplace: *${marketplaceCode}*\n`;
+      message += `Expected Brands: *${result.expectedCount}*\n\n`;
+
+      for (const dateResult of result.dateResults) {
+        if (!dateResult.hasData) {
+          message += `📅 ${dateResult.date} - ⚪ No data\n`;
+        } else if (dateResult.missingCount === 0) {
+          message += `📅 ${dateResult.date} - ✅ All brands found\n`;
+        } else {
+          const missingList = dateResult.missingBrands.length <= 5
+            ? dateResult.missingBrands.join(", ")
+            : dateResult.missingBrands.slice(0, 5).join(", ") + ` +${dateResult.missingBrands.length - 5} more`;
+          message += `📅 ${dateResult.date} - ⚠️ Missing: ${missingList}\n`;
+        }
+      }
+
+      message += `\n*Summary:* ${result.datesWithMissing} of ${result.totalDates} days with missing brands`;
+
+      sendSlackResponse(responseUrl, message);
+
     } else {
-      message += `\n✅ All brands found!`;
-    }
+      // Standard validation for non-BA Dash categories
+      sendSlackResponse(responseUrl, `🔍 Starting brand validation for *${matchedCategory}* (Marketplace: ${marketplaceCode})...`);
 
-    sendSlackResponse(responseUrl, message);
+      const result = AHA_ValidateBrands(matchedCategory, centralSheetId, marketplaceCode);
+
+      if (!result.success) {
+        sendSlackResponse(responseUrl, `❌ Validation failed: ${result.error}`);
+        return;
+      }
+
+      if (result.skipped) {
+        sendSlackResponse(responseUrl, `⚠️ Validation skipped: ${result.reason}`);
+        return;
+      }
+
+      // Build standard response message
+      let message = `📊 *Brand Validation Complete - ${matchedCategory}*\n\n`;
+      message += `Marketplace: *${marketplaceCode}*\n`;
+      message += `Expected Brands: *${result.expectedCount}*\n`;
+      message += `Found Brands: *${result.foundCount}*\n`;
+      message += `Missing Brands: *${result.missingCount}*\n`;
+
+      if (result.missingCount > 0) {
+        const missingList = result.missingBrands.length <= 10
+          ? result.missingBrands.join(", ")
+          : result.missingBrands.slice(0, 10).join(", ") + ` ... and ${result.missingBrands.length - 10} more`;
+        message += `\n*Missing:* ${missingList}`;
+      } else {
+        message += `\n✅ All brands found!`;
+      }
+
+      sendSlackResponse(responseUrl, message);
+    }
 
   } catch (e) {
     sendSlackResponse(responseUrl, `❌ Error during validation: ${e.message}`);

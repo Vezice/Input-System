@@ -12,6 +12,18 @@ const BRAND_VALIDATION_CONFIG = {
   ADMIN_USER_TAG: "<@U08TUF8LW2H>"
 };
 
+/**
+ * BA Dash date column mapping (in "Import" sheet)
+ * Column A = Brand Code for all
+ * Date columns vary by category
+ */
+const BA_DASH_DATE_COLUMNS = {
+  "BA Dash SHO": 18, // Column R
+  "BA Dash LAZ": 2,  // Column B
+  "BA Dash TIK": 2,  // Column B
+  "BA Dash TOK": 2   // Column B
+};
+
 
 /**
  * Main validation function - Called after import completes
@@ -88,6 +100,179 @@ function AHA_ValidateBrands(category, centralSheetId, marketplaceCode) {
     Logger.log(`Error in brand validation: ${e.message}`);
     return { success: false, error: e.message };
   }
+}
+
+
+/**
+ * Validates BA Dash categories with date-based filtering
+ * Uses "Import" sheet which has clean, processed data
+ *
+ * @param {string} category - The BA Dash category (e.g., "BA Dash SHO")
+ * @param {string} centralSheetId - The ID of the Central sheet
+ * @param {string} marketplaceCode - The marketplace code (SHO, LAZ, TIK, TOK)
+ * @param {string} dateRange - Date range: "yesterday", "L7D", "L30D" (default: "L7D")
+ * @returns {Object} Validation results with per-date breakdown
+ */
+function AHA_ValidateBADashBrands(category, centralSheetId, marketplaceCode, dateRange) {
+  try {
+    dateRange = dateRange || "L7D";
+    Logger.log(`Starting BA Dash validation for ${category} (${dateRange})`);
+
+    // Get expected brands from Brand Master
+    const adminSS = SpreadsheetApp.openById(BRAND_VALIDATION_CONFIG.ADMIN_SHEET_ID);
+    const brandMasterSheet = adminSS.getSheetByName("Brand Master");
+
+    if (!brandMasterSheet) {
+      return { success: false, error: "Brand Master sheet not found" };
+    }
+
+    const expectedBrands = getBrandMasterList(brandMasterSheet, marketplaceCode);
+    if (expectedBrands.length === 0) {
+      return { success: true, skipped: true, reason: `No brands for ${marketplaceCode} in master list` };
+    }
+
+    // Open Central Sheet's Import tab
+    const centralSS = SpreadsheetApp.openById(centralSheetId);
+    const importSheet = centralSS.getSheetByName("Import");
+
+    if (!importSheet) {
+      return { success: false, error: "Import sheet not found in Central sheet" };
+    }
+
+    // Get date column for this category
+    const dateColumn = BA_DASH_DATE_COLUMNS[category];
+    if (!dateColumn) {
+      return { success: false, error: `No date column mapping for ${category}` };
+    }
+
+    // Calculate date range
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let startDate, endDate;
+
+    if (dateRange === "yesterday") {
+      startDate = new Date(today);
+      startDate.setDate(startDate.getDate() - 1);
+      endDate = new Date(startDate);
+    } else if (dateRange === "L7D") {
+      endDate = new Date(today);
+      endDate.setDate(endDate.getDate() - 1); // Yesterday
+      startDate = new Date(endDate);
+      startDate.setDate(startDate.getDate() - 6); // 7 days back from yesterday
+    } else if (dateRange === "L30D") {
+      endDate = new Date(today);
+      endDate.setDate(endDate.getDate() - 1); // Yesterday
+      startDate = new Date(endDate);
+      startDate.setDate(startDate.getDate() - 29); // 30 days back from yesterday
+    } else {
+      return { success: false, error: `Invalid date range: ${dateRange}` };
+    }
+
+    Logger.log(`Date range: ${startDate.toDateString()} to ${endDate.toDateString()}`);
+
+    // Get data from Import sheet (Column A = Brand, dateColumn = Date)
+    const lastRow = importSheet.getLastRow();
+    if (lastRow < 2) {
+      return { success: false, error: "No data in Import sheet" };
+    }
+
+    // Get brand column (A) and date column
+    const maxCol = Math.max(1, dateColumn);
+    const data = importSheet.getRange(2, 1, lastRow - 1, maxCol).getValues();
+
+    // Group brands by date
+    const brandsByDate = {};
+
+    for (const row of data) {
+      const brand = (row[0] || "").toString().trim().toUpperCase();
+      const dateValue = row[dateColumn - 1]; // Convert to 0-based index
+
+      if (!brand || !dateValue) continue;
+
+      // Parse date (handle both Date objects and strings like "31 Dec 2025")
+      let rowDate;
+      if (dateValue instanceof Date) {
+        rowDate = new Date(dateValue);
+      } else {
+        rowDate = new Date(dateValue);
+      }
+
+      if (isNaN(rowDate.getTime())) continue; // Skip invalid dates
+
+      rowDate.setHours(0, 0, 0, 0);
+
+      // Check if date is within range
+      if (rowDate >= startDate && rowDate <= endDate) {
+        const dateKey = formatDateKey(rowDate);
+        if (!brandsByDate[dateKey]) {
+          brandsByDate[dateKey] = new Set();
+        }
+        brandsByDate[dateKey].add(brand);
+      }
+    }
+
+    // Validate each date
+    const dateResults = [];
+    const expectedBrandsSet = new Set(expectedBrands);
+    let totalDaysWithMissing = 0;
+
+    // Generate all dates in range
+    const allDates = [];
+    let currentDate = new Date(startDate);
+    while (currentDate <= endDate) {
+      allDates.push(formatDateKey(currentDate));
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    for (const dateKey of allDates) {
+      const brandsOnDate = brandsByDate[dateKey] || new Set();
+      const missingOnDate = [];
+
+      for (const expectedBrand of expectedBrands) {
+        if (!brandsOnDate.has(expectedBrand)) {
+          missingOnDate.push(expectedBrand);
+        }
+      }
+
+      const hasData = brandsOnDate.size > 0;
+      const hasMissing = missingOnDate.length > 0 && hasData;
+
+      if (hasMissing) totalDaysWithMissing++;
+
+      dateResults.push({
+        date: dateKey,
+        hasData: hasData,
+        foundCount: brandsOnDate.size,
+        missingCount: hasData ? missingOnDate.length : 0,
+        missingBrands: hasData ? missingOnDate : []
+      });
+    }
+
+    return {
+      success: true,
+      category: category,
+      dateRange: dateRange,
+      expectedCount: expectedBrands.length,
+      totalDates: allDates.length,
+      datesWithMissing: totalDaysWithMissing,
+      dateResults: dateResults
+    };
+
+  } catch (e) {
+    Logger.log(`Error in BA Dash validation: ${e.message}`);
+    return { success: false, error: e.message };
+  }
+}
+
+
+/**
+ * Formats a date as "DD/MM/YYYY" for display
+ */
+function formatDateKey(date) {
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  return `${day}/${month}/${year}`;
 }
 
 
