@@ -165,8 +165,30 @@ function AHA_SystemWatchdog() {
   const STALENESS_LIMIT_MS = 10 * 60 * 1000; // 10 minutes
   const MAX_RESTARTS = 3; 
 
-  if (!status) { 
-    Logger.log("Watchdog: System is OFFLINE. Deleting self.");
+  if (!status) {
+    // System is OFFLINE - but check if there are pending files that need processing
+    try {
+      const moveFolderId = properties.getProperty("MOVE_FOLDER_ID");
+      if (moveFolderId) {
+        const folder = DriveApp.getFolderById(moveFolderId);
+        const files = folder.getFiles();
+        if (files.hasNext()) {
+          // There ARE pending files but system is OFFLINE - this is wrong!
+          const workerName = properties.getProperty("WORKER_NAME") || "Unknown Worker";
+          AHA_SlackNotify3(`🚨 *Watchdog Alert*: ${workerName} is OFFLINE but has pending files in Move folder! Restarting validation... <@U08TUF8LW2H>`);
+          properties.deleteProperty("RESTART_COUNT_VALIDATING");
+          properties.deleteProperty("RESTART_COUNT_IMPORTING");
+          AHA_StartValTrigger2(1); // Restart the process
+          return;
+        }
+      }
+    } catch (e) {
+      // Folder ID might be stale/invalid - clear it
+      properties.deleteProperty("MOVE_FOLDER_ID");
+    }
+
+    // No pending files - truly OFFLINE, safe to delete watchdog
+    Logger.log("Watchdog: System is OFFLINE with no pending files. Deleting self.");
     AHA_DeleteTriggers2("AHA_SystemWatchdog");
     return;
   }
