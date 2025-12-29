@@ -14,6 +14,7 @@ TARGET_FILES=(
     "Phase 3 Worker Setup.js"
     "Phase 3 Worker Copy.js"
     "Phase 3 Worker Management.js"
+    "Phase 3 BigQuery Export.js"
 )
 
 # 2. List the corresponding SOURCE master files.
@@ -27,6 +28,7 @@ SOURCE_FILES=(
     "BA Produk SHO/Worker 1/Phase 3 Worker Setup.js"
     "BA Produk SHO/Central/Phase 3 Worker Copy.js"
     "BA Produk SHO/Central/Phase 3 Worker Management.js"
+    "BA Produk SHO/Central/Phase 3 BigQuery Export.js"
 )
 # --- END CONFIGURATION ---
 
