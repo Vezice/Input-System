@@ -36,8 +36,7 @@ function AHA_SetupDashboard() {
   }
   setupBrandMasterSheet(brandMasterSheet);
 
-  Logger.log("Dashboard setup complete!");
-  SpreadsheetApp.getUi().alert("Dashboard setup complete!\n\nPlease update the IMPORTRANGE formula in 'Brand Master' sheet cell A2 to connect your external brand list.");
+  Logger.log("Dashboard setup complete! Please update the IMPORTRANGE formula in 'Brand Master' sheet row 10 to connect your external brand list.");
 }
 
 
