@@ -436,6 +436,21 @@ function handleBrandValidation(responseUrl, commandInput) {
 
       message += `\n*Summary:* ${result.datesWithMissing} of ${result.totalDates} days with missing brands`;
 
+      // Add duplicate check results
+      if (result.duplicateCount > 0) {
+        message += `\n\n🔴 *Duplicates Found:* ${result.duplicateCount} brand+date combinations\n`;
+        // Show up to 10 duplicates
+        const dupsToShow = result.duplicates.slice(0, 10);
+        for (const dup of dupsToShow) {
+          message += `• ${dup.date} - ${dup.brand} (${dup.count}x)\n`;
+        }
+        if (result.duplicates.length > 10) {
+          message += `_...and ${result.duplicates.length - 10} more duplicates_\n`;
+        }
+      } else {
+        message += `\n\n✅ *No duplicates found*`;
+      }
+
       sendSlackResponse(responseUrl, message);
 
     } else {
@@ -490,7 +505,7 @@ function handleHelpCommand(responseUrl) {
 
 *Validation Commands:*
 • \`/ibot validate [category]\` - Validate brands for a category
-• \`/ibot validate [BA Dash category] [range]\` - Validate with date range (yesterday, L7D, L30D)
+• \`/ibot validate [BA Dash category] [range]\` - Validate with date range + duplicate check (yesterday, L7D, L30D)
 • \`/ibot validateall\` - Validate all categories at once
 
 *Check Commands:*
@@ -730,11 +745,19 @@ function handleValidateAllCommand(responseUrl) {
         if (isBADash) {
           result = AHA_ValidateBADashBrands(category, centralSheetId, marketplaceCode, "L7D");
           if (result.success && !result.skipped) {
+            let statusParts = [];
             if (result.datesWithMissing > 0) {
               categoriesWithMissing++;
-              results.push(`⚠️ *${category}*: ${result.datesWithMissing}/${result.totalDates} days with missing brands`);
+              statusParts.push(`${result.datesWithMissing}/${result.totalDates} days missing`);
+            }
+            if (result.duplicateCount > 0) {
+              statusParts.push(`${result.duplicateCount} dups`);
+            }
+
+            if (statusParts.length > 0) {
+              results.push(`⚠️ *${category}*: ${statusParts.join(", ")}`);
             } else {
-              results.push(`✅ *${category}*: All brands found (L7D)`);
+              results.push(`✅ *${category}*: All brands found, no duplicates (L7D)`);
             }
           } else if (result.skipped) {
             results.push(`⚪ *${category}*: Skipped - ${result.reason}`);

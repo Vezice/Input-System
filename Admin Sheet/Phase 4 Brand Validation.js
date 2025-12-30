@@ -180,8 +180,10 @@ function AHA_ValidateBADashBrands(category, centralSheetId, marketplaceCode, dat
     const maxCol = Math.max(1, dateColumn);
     const data = importSheet.getRange(2, 1, lastRow - 1, maxCol).getValues();
 
-    // Group brands by date
+    // Group brands by date (for missing brand check)
+    // Also track brand+date counts (for duplicate check)
     const brandsByDate = {};
+    const brandDateCounts = {}; // Key: "date|brand", Value: count
 
     for (const row of data) {
       const brand = (row[0] || "").toString().trim().toUpperCase();
@@ -208,6 +210,19 @@ function AHA_ValidateBADashBrands(category, centralSheetId, marketplaceCode, dat
           brandsByDate[dateKey] = new Set();
         }
         brandsByDate[dateKey].add(brand);
+
+        // Track duplicates: count occurrences of each brand+date combination
+        const brandDateKey = `${dateKey}|${brand}`;
+        brandDateCounts[brandDateKey] = (brandDateCounts[brandDateKey] || 0) + 1;
+      }
+    }
+
+    // Find duplicates (brand+date appearing more than once)
+    const duplicates = [];
+    for (const [key, count] of Object.entries(brandDateCounts)) {
+      if (count > 1) {
+        const [dateKey, brand] = key.split("|");
+        duplicates.push({ date: dateKey, brand: brand, count: count });
       }
     }
 
@@ -255,7 +270,9 @@ function AHA_ValidateBADashBrands(category, centralSheetId, marketplaceCode, dat
       expectedCount: expectedBrands.length,
       totalDates: allDates.length,
       datesWithMissing: totalDaysWithMissing,
-      dateResults: dateResults
+      dateResults: dateResults,
+      duplicates: duplicates,
+      duplicateCount: duplicates.length
     };
 
   } catch (e) {
