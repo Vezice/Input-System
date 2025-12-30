@@ -424,6 +424,18 @@ function AHA_ProcessAdvancedImport(data, targetSheet, folderName, dataRowIndex, 
               found = true;
             }
           }
+          else if (action === "COALESCE_EXACT") {
+            // Try each replacement column name in order, use the first one that exists
+            for (const colName of rule.replacements) {
+              const colNameLower = colName.toLowerCase().trim();
+              if (sourceHeaderMap.has(colNameLower)) {
+                const idx = sourceHeaderMap.get(colNameLower)[0];
+                value = sourceRow[idx];
+                found = true;
+                break;
+              }
+            }
+          }
         }
         
         newRow.push(value);
@@ -519,8 +531,20 @@ function AHA_ProcessSingleRowReport(data, targetSheet, logSheet, folderName, dat
                 if (matchingHeaders.length > 0) {
                     // FIX: Access [0] here too
                     const idx = sourceHeaderMap.get(matchingHeaders[0])[0];
-                    value = sourceRow[idx]; 
+                    value = sourceRow[idx];
                     found = true;
+                }
+            }
+            else if (action === "COALESCE_EXACT") {
+                // Try each replacement column name in order, use the first one that exists
+                for (const colName of rule.replacements) {
+                    const colNameLower = colName.toLowerCase().trim();
+                    if (sourceHeaderMap.has(colNameLower)) {
+                        const idx = sourceHeaderMap.get(colNameLower)[0];
+                        value = sourceRow[idx];
+                        found = true;
+                        break;
+                    }
                 }
             }
         }
@@ -574,7 +598,18 @@ function AHA_ProcessBADashSHOFile(data, targetSheet, logSheet, folderName, dataR
                 const matchingHeaders = sourceHeaderList.filter(h => h.startsWith(pattern));
                 if (matchingHeaders.length > 0) {
                     const idx = sourceHeaderMap.get(matchingHeaders[0])[0];
-                    value = sourceRow[idx]; 
+                    value = sourceRow[idx];
+                }
+            }
+            else if (action === "COALESCE_EXACT") {
+                // Try each replacement column name in order, use the first one that exists
+                for (const colName of rule.replacements) {
+                    const colNameLower = colName.toLowerCase().trim();
+                    if (sourceHeaderMap.has(colNameLower)) {
+                        const idx = sourceHeaderMap.get(colNameLower)[0];
+                        value = sourceRow[idx];
+                        break;
+                    }
                 }
             }
         }
@@ -671,6 +706,17 @@ function AHA_ProcessBADashTIKTOKFile(data, targetSheet, logSheet, folderName, da
             value = sourceRow[idx];
           }
         }
+        else if (action === "COALESCE_EXACT") {
+          // Try each replacement column name in order, use the first one that exists
+          for (const colName of rule.replacements) {
+            const colNameLower = colName.toLowerCase().trim();
+            if (sourceHeaderMap.has(colNameLower)) {
+              const idx = sourceHeaderMap.get(colNameLower)[0];
+              value = sourceRow[idx];
+              break;
+            }
+          }
+        }
       }
       transformedRow.push(value);
     }
@@ -729,15 +775,25 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
                 const rule = specialRules[standardHeader];
                 const action = rule.action;
                 const pattern = (rule.replacements[0] || "").toLowerCase().trim();
-                
-                if (!pattern) continue;
 
-                if (action === "COALESCE_STARTS_WITH") {
+                if (action === "COALESCE_STARTS_WITH" && pattern) {
                     const matchingHeaders = sourceHeaderList.filter(h => h.startsWith(pattern));
                     if (matchingHeaders.length > 0) {
                         const idx = sourceHeaderMap.get(matchingHeaders[0])[0];
                         value = sourceRow[idx];
                         found = true;
+                    }
+                }
+                else if (action === "COALESCE_EXACT") {
+                    // Try each replacement column name in order, use the first one that exists
+                    for (const colName of rule.replacements) {
+                        const colNameLower = colName.toLowerCase().trim();
+                        if (sourceHeaderMap.has(colNameLower)) {
+                            const idx = sourceHeaderMap.get(colNameLower)[0];
+                            value = sourceRow[idx];
+                            found = true;
+                            break;
+                        }
                     }
                 }
             }
