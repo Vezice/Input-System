@@ -227,16 +227,26 @@ function sendSlackResponse(responseUrl, text) {
     Logger.log("Cannot send Slack response: response_url is missing.");
     return;
   }
+
+  // Truncate if too long to avoid Slack errors
+  let finalText = text;
+  if (text.length > 2900) {
+    finalText = text.substring(0, 2900) + "\n...(truncated)";
+  }
+
   const payload = {
-    response_type: "in_channel", 
-    text: "System Admin: "+text
+    response_type: "in_channel",
+    text: "System Admin: " + finalText
   };
   const options = {
     method: "post",
     contentType: "application/json",
     payload: JSON.stringify(payload)
   };
+
+  Logger.log(`Sending to Slack (${finalText.length} chars)`);
   UrlFetchApp.fetch(responseUrl, options);
+  Logger.log(`Slack response sent`);
 }
 
 /**
@@ -427,9 +437,8 @@ function handleBrandValidation(responseUrl, commandInput) {
         } else if (dateResult.missingCount === 0) {
           message += `📅 ${dateResult.date} - ✅ All brands found\n`;
         } else {
-          const missingList = dateResult.missingBrands.length <= 5
-            ? dateResult.missingBrands.join(", ")
-            : dateResult.missingBrands.slice(0, 5).join(", ") + ` +${dateResult.missingBrands.length - 5} more`;
+          // Show all missing brands
+          const missingList = dateResult.missingBrands.join(", ");
           message += `📅 ${dateResult.date} - ⚠️ Missing: ${missingList}\n`;
         }
       }
@@ -477,9 +486,8 @@ function handleBrandValidation(responseUrl, commandInput) {
       message += `Missing Brands: *${result.missingCount}*\n`;
 
       if (result.missingCount > 0) {
-        const missingList = result.missingBrands.length <= 10
-          ? result.missingBrands.join(", ")
-          : result.missingBrands.slice(0, 10).join(", ") + ` ... and ${result.missingBrands.length - 10} more`;
+        // Show all missing brands
+        const missingList = result.missingBrands.join(", ");
         message += `\n*Missing:* ${missingList}`;
       } else {
         message += `\n✅ All brands found!`;
