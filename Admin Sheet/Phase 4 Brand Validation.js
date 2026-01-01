@@ -104,8 +104,68 @@ function AHA_ValidateBrands(category, centralSheetId, marketplaceCode) {
 
 
 /**
+ * Validates BSL categories against ALL unique brands from ALL marketplaces.
+ * BSL contains data for all brands across SHO, LAZ, TIK, TOK.
+ *
+ * @param {string} category - The BSL category (e.g., "Demografis BSL", "Proyeksi Stok BSL")
+ * @param {string} centralSheetId - The ID of the Central sheet
+ * @returns {Object} Validation results
+ */
+function AHA_ValidateBSLBrands(category, centralSheetId) {
+  try {
+    Logger.log(`Starting BSL brand validation for ${category}`);
+
+    // Get the Admin sheet for brand master list
+    const adminSS = SpreadsheetApp.openById(BRAND_VALIDATION_CONFIG.ADMIN_SHEET_ID);
+    const brandMasterSheet = adminSS.getSheetByName("Brand Master");
+
+    if (!brandMasterSheet) {
+      Logger.log("Brand Master sheet not found in Admin Sheet");
+      return { success: false, error: "Brand Master sheet not found" };
+    }
+
+    // Get ALL unique brands from ALL marketplaces (SHO, LAZ, TIK, TOK)
+    const expectedBrands = getBrandMasterListAllMarketplaces(brandMasterSheet);
+    if (expectedBrands.length === 0) {
+      Logger.log("No brands found in Brand Master. Skipping validation.");
+      return { success: true, skipped: true, reason: "No brands in master list" };
+    }
+
+    // Get imported brands from the Central sheet's category tab
+    const centralSS = SpreadsheetApp.openById(centralSheetId);
+    const categorySheet = centralSS.getSheetByName(category);
+
+    if (!categorySheet) {
+      Logger.log(`Category sheet '${category}' not found in Central sheet`);
+      return { success: false, error: `Category sheet '${category}' not found` };
+    }
+
+    // Get brands from Column A (skip header row)
+    const importedBrands = getImportedBrands(categorySheet);
+    Logger.log(`Found ${importedBrands.size} unique brands in imported data`);
+
+    // Compare and find missing brands
+    const missingBrands = findMissingBrands(expectedBrands, importedBrands);
+    Logger.log(`Missing brands: ${missingBrands.length}`);
+
+    return {
+      success: true,
+      expectedCount: expectedBrands.length,
+      foundCount: importedBrands.size,
+      missingCount: missingBrands.length,
+      missingBrands: missingBrands
+    };
+
+  } catch (e) {
+    Logger.log(`Error in BSL brand validation: ${e.message}`);
+    return { success: false, error: e.message };
+  }
+}
+
+
+/**
  * Validates BA Dash categories with date-based filtering
- * Uses "Import" sheet which has clean, processed data
+ * Uses "Import" sheet which has clean, processed data with fixed date format
  *
  * @param {string} category - The BA Dash category (e.g., "BA Dash SHO")
  * @param {string} centralSheetId - The ID of the Central sheet
@@ -117,6 +177,7 @@ function AHA_ValidateBADashBrands(category, centralSheetId, marketplaceCode, dat
   try {
     dateRange = dateRange || "L7D";
     Logger.log(`Starting BA Dash validation for ${category} (${dateRange})`);
+    Logger.log(`Central Sheet ID: ${centralSheetId}`);
 
     // Get expected brands from Brand Master
     const adminSS = SpreadsheetApp.openById(BRAND_VALIDATION_CONFIG.ADMIN_SHEET_ID);
@@ -131,12 +192,17 @@ function AHA_ValidateBADashBrands(category, centralSheetId, marketplaceCode, dat
       return { success: true, skipped: true, reason: `No brands for ${marketplaceCode} in master list` };
     }
 
-    // Open Central Sheet's Import tab
+    // Open Central Sheet's Import tab (contains clean, processed data)
     const centralSS = SpreadsheetApp.openById(centralSheetId);
+
+    // Debug: Log all sheet names in this spreadsheet
+    const allSheets = centralSS.getSheets().map(s => s.getName());
+    Logger.log(`Sheets in Central: ${allSheets.join(", ")}`);
+
     const importSheet = centralSS.getSheetByName("Import");
 
     if (!importSheet) {
-      return { success: false, error: "Import sheet not found in Central sheet" };
+      return { success: false, error: `Import sheet not found. Available sheets: ${allSheets.join(", ")}` };
     }
 
     // Get date column for this category
@@ -323,6 +389,41 @@ function getBrandMasterList(sheet, marketplaceCode) {
   }
 
   Logger.log(`Found ${brands.length} brands for marketplace ${marketplaceCode}`);
+  return brands;
+}
+
+
+/**
+ * Gets ALL unique brands from ALL marketplaces (SHO, LAZ, TIK, TOK) in the Brand Master sheet.
+ * Used for BSL validation which contains data from all marketplaces.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - The Brand Master sheet
+ * @returns {string[]} Array of unique brand codes from all marketplaces
+ */
+function getBrandMasterListAllMarketplaces(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 10) return []; // No data yet (header is at row 9)
+
+  const validMarketplaces = ["SHO", "LAZ", "TIK", "TOK"];
+
+  // Get both columns: A (Marketplace Code) and B (Brand Code)
+  const data = sheet.getRange(10, 1, lastRow - 9, 2).getValues();
+  const brandsSet = new Set();
+
+  for (const row of data) {
+    const rowMarketplace = (row[0] || "").toString().trim().toUpperCase();
+    const brandCode = (row[1] || "").toString().trim();
+
+    // Include brands from all valid marketplaces, skip placeholder/example rows
+    if (validMarketplaces.includes(rowMarketplace) &&
+        brandCode !== "" &&
+        !brandCode.startsWith("(")) {
+      brandsSet.add(brandCode.toUpperCase()); // Normalize to uppercase for comparison
+    }
+  }
+
+  const brands = Array.from(brandsSet);
+  Logger.log(`Found ${brands.length} unique brands across all marketplaces`);
   return brands;
 }
 

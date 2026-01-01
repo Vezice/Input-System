@@ -343,7 +343,8 @@ function triggerCategoryImport(category) {
     }
 
     // Create a minimal payload that mimics Slack
-    const payload = `text=${encodeURIComponent(category)}&user_name=ControlPanel&response_url=`;
+    // Note: response_url is omitted since Slack is disabled
+    const payload = `text=${encodeURIComponent(category)}&user_name=ControlPanel`;
 
     const options = {
       'method': 'post',
@@ -486,28 +487,252 @@ function handleOtherFoldersCheckDirect(rootFolderId) {
  * Direct validate all handler
  */
 function handleValidateAllCommandDirect() {
-  const categories = [
-    "BA Dash SHO", "BA Dash TIK", "BA Dash TOK", "BA Dash LAZ",
+  // Get Central Sheet IDs from List sheet
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const listSheet = ss.getSheetByName("List");
+  if (!listSheet) {
+    return "Error: List sheet not found";
+  }
+
+  // Get category data: Column A = Category, Column B = Role, Column F = Spreadsheet ID
+  const listData = listSheet.getRange(2, 1, listSheet.getLastRow() - 1, 6).getValues();
+
+  // Build a lookup map: category -> centralSheetId (only for Central rows)
+  const categoryMap = {};
+  for (const row of listData) {
+    const cat = (row[0] || "").toString().trim();
+    const role = (row[1] || "").toString().trim(); // Column B (index 1)
+    const sheetId = (row[5] || "").toString().trim(); // Column F (index 5)
+
+    // Only use Central sheets, not Worker sheets
+    if (cat && sheetId && role === "Central") {
+      categoryMap[cat] = sheetId;
+    }
+  }
+
+  // BA Dash categories use AHA_ValidateBADashBrands (date-based, uses Import sheet)
+  const baDashCategories = [
+    "BA Dash SHO", "BA Dash TIK", "BA Dash TOK", "BA Dash LAZ"
+  ];
+
+  // BA Produk categories use AHA_ValidateBrands (simple brand check, uses category sheet)
+  const baProdukCategories = [
     "BA Produk SHO", "BA Produk TIK", "BA Produk LAZ"
+  ];
+
+  // Informasi SHO categories
+  const informasiCategories = [
+    "Informasi Dasar SHO", "Informasi Dikirim Dalam SHO",
+    "Informasi Media SHO", "Informasi Penjualan SHO"
+  ];
+
+  // Export SKU categories
+  const exportSKUCategories = [
+    "Export SKU LAZ", "Export SKU TIK"
+  ];
+
+  // BSL categories
+  const bslCategories = [
+    "Demografis BSL", "Proyeksi Stok BSL"
   ];
 
   let results = "Validation Results:\n\n";
 
-  for (const category of categories) {
+  // Validate BA Dash categories (with date-based validation)
+  for (const category of baDashCategories) {
     try {
-      const result = AHA_ValidateBADashBrands(category);
+      const centralSheetId = categoryMap[category];
+      if (!centralSheetId) {
+        results += `${category}: No Central Sheet ID found in List\n\n`;
+        continue;
+      }
+
+      Logger.log(`Validating ${category} with Central Sheet ID: ${centralSheetId}`);
+      const marketplaceCode = category.slice(-3).toUpperCase();
+      const result = AHA_ValidateBADashBrands(category, centralSheetId, marketplaceCode, "L7D");
+
       if (result.success) {
-        const missingCount = result.missingBrands ? result.missingBrands.length : 0;
-        const dupCount = result.duplicates ? result.duplicates.length : 0;
-        results += `${category}: ${result.foundBrands.length} brands found`;
-        if (missingCount > 0) results += `, ${missingCount} missing`;
-        if (dupCount > 0) results += `, ${dupCount} duplicates`;
-        results += "\n";
+        if (result.skipped) {
+          results += `${category}: Skipped - ${result.reason}\n\n`;
+        } else {
+          // Header
+          results += `📊 Brand Validation - ${category} (L7D)\n`;
+          results += `Marketplace: ${marketplaceCode}\n`;
+          results += `Expected Brands: ${result.expectedCount}\n`;
+
+          // Per-date breakdown
+          if (result.dateResults) {
+            for (const dateResult of result.dateResults) {
+              if (!dateResult.hasData) {
+                results += `📅 ${dateResult.date} - ⚪ No data\n`;
+              } else if (dateResult.missingCount > 0) {
+                results += `📅 ${dateResult.date} - ⚠️ Missing: ${dateResult.missingBrands.join(", ")}\n`;
+              } else {
+                results += `📅 ${dateResult.date} - ✅ All brands found\n`;
+              }
+            }
+          }
+
+          // Summary
+          const daysWithMissing = result.datesWithMissing || 0;
+          results += `Summary: ${daysWithMissing} of ${result.totalDates} days with missing brands\n`;
+
+          // Duplicates
+          if (result.duplicates && result.duplicates.length > 0) {
+            results += `🔴 Duplicates Found: ${result.duplicateCount} brand+date combinations\n`;
+            for (const dup of result.duplicates) {
+              results += `  • ${dup.date} - ${dup.brand} (${dup.count}x)\n`;
+            }
+          }
+
+          results += "\n";
+        }
       } else {
-        results += `${category}: ${result.message}\n`;
+        results += `${category}: ${result.error || "Unknown error"}\n\n`;
       }
     } catch (e) {
-      results += `${category}: Error - ${e.message}\n`;
+      results += `${category}: Error - ${e.message}\n\n`;
+    }
+  }
+
+  // Validate BA Produk categories (simple brand validation)
+  for (const category of baProdukCategories) {
+    try {
+      const centralSheetId = categoryMap[category];
+      if (!centralSheetId) {
+        results += `${category}: No Central Sheet ID found in List\n\n`;
+        continue;
+      }
+
+      const marketplaceCode = category.slice(-3).toUpperCase();
+      const result = AHA_ValidateBrands(category, centralSheetId, marketplaceCode);
+
+      if (result.success) {
+        if (result.skipped) {
+          results += `${category}: Skipped - ${result.reason}\n\n`;
+        } else {
+          // Header
+          results += `📊 Brand Validation - ${category}\n`;
+          results += `Marketplace: ${marketplaceCode}\n`;
+          results += `Expected: ${result.expectedCount} | Found: ${result.foundCount}\n`;
+
+          if (result.missingCount > 0) {
+            results += `⚠️ Missing (${result.missingCount}): ${result.missingBrands.join(", ")}\n`;
+          } else {
+            results += `✅ All brands found!\n`;
+          }
+          results += "\n";
+        }
+      } else {
+        results += `${category}: ${result.error || "Unknown error"}\n\n`;
+      }
+    } catch (e) {
+      results += `${category}: Error - ${e.message}\n\n`;
+    }
+  }
+
+  // Validate Informasi SHO categories
+  for (const category of informasiCategories) {
+    try {
+      const centralSheetId = categoryMap[category];
+      if (!centralSheetId) {
+        results += `${category}: No Central Sheet ID found in List\n\n`;
+        continue;
+      }
+
+      const marketplaceCode = category.slice(-3).toUpperCase(); // SHO
+      const result = AHA_ValidateBrands(category, centralSheetId, marketplaceCode);
+
+      if (result.success) {
+        if (result.skipped) {
+          results += `${category}: Skipped - ${result.reason}\n\n`;
+        } else {
+          results += `📊 Brand Validation - ${category}\n`;
+          results += `Marketplace: ${marketplaceCode}\n`;
+          results += `Expected: ${result.expectedCount} | Found: ${result.foundCount}\n`;
+
+          if (result.missingCount > 0) {
+            results += `⚠️ Missing (${result.missingCount}): ${result.missingBrands.join(", ")}\n`;
+          } else {
+            results += `✅ All brands found!\n`;
+          }
+          results += "\n";
+        }
+      } else {
+        results += `${category}: ${result.error || "Unknown error"}\n\n`;
+      }
+    } catch (e) {
+      results += `${category}: Error - ${e.message}\n\n`;
+    }
+  }
+
+  // Validate Export SKU categories
+  for (const category of exportSKUCategories) {
+    try {
+      const centralSheetId = categoryMap[category];
+      if (!centralSheetId) {
+        results += `${category}: No Central Sheet ID found in List\n\n`;
+        continue;
+      }
+
+      const marketplaceCode = category.slice(-3).toUpperCase(); // LAZ or TIK
+      const result = AHA_ValidateBrands(category, centralSheetId, marketplaceCode);
+
+      if (result.success) {
+        if (result.skipped) {
+          results += `${category}: Skipped - ${result.reason}\n\n`;
+        } else {
+          results += `📊 Brand Validation - ${category}\n`;
+          results += `Marketplace: ${marketplaceCode}\n`;
+          results += `Expected: ${result.expectedCount} | Found: ${result.foundCount}\n`;
+
+          if (result.missingCount > 0) {
+            results += `⚠️ Missing (${result.missingCount}): ${result.missingBrands.join(", ")}\n`;
+          } else {
+            results += `✅ All brands found!\n`;
+          }
+          results += "\n";
+        }
+      } else {
+        results += `${category}: ${result.error || "Unknown error"}\n\n`;
+      }
+    } catch (e) {
+      results += `${category}: Error - ${e.message}\n\n`;
+    }
+  }
+
+  // Validate BSL categories (uses ALL unique brands from ALL marketplaces)
+  for (const category of bslCategories) {
+    try {
+      const centralSheetId = categoryMap[category];
+      if (!centralSheetId) {
+        results += `${category}: No Central Sheet ID found in List\n\n`;
+        continue;
+      }
+
+      // BSL uses special validation - all unique brands from all marketplaces
+      const result = AHA_ValidateBSLBrands(category, centralSheetId);
+
+      if (result.success) {
+        if (result.skipped) {
+          results += `${category}: Skipped - ${result.reason}\n\n`;
+        } else {
+          results += `📊 Brand Validation - ${category}\n`;
+          results += `Source: All Marketplaces (SHO, LAZ, TIK, TOK) - Unique\n`;
+          results += `Expected: ${result.expectedCount} | Found: ${result.foundCount}\n`;
+
+          if (result.missingCount > 0) {
+            results += `⚠️ Missing (${result.missingCount}): ${result.missingBrands.join(", ")}\n`;
+          } else {
+            results += `✅ All brands found!\n`;
+          }
+          results += "\n";
+        }
+      } else {
+        results += `${category}: ${result.error || "Unknown error"}\n\n`;
+      }
+    } catch (e) {
+      results += `${category}: Error - ${e.message}\n\n`;
     }
   }
 
@@ -517,35 +742,126 @@ function handleValidateAllCommandDirect() {
 /**
  * Direct brand validation handler
  */
-function handleBrandValidationDirect(category) {
+function handleBrandValidationDirect(inputCategory) {
   try {
-    const result = AHA_ValidateBADashBrands(category);
+    // Parse category and optional date range (e.g., "BA Dash SHO L7D" or "BA Dash SHO")
+    let category = inputCategory;
+    let dateRange = "L7D"; // Default
 
-    if (!result.success) {
-      return `Validation for ${category}: ${result.message}`;
+    // Check if date range is specified
+    const dateRangeMatch = inputCategory.match(/\s+(L7D|L30D|yesterday)$/i);
+    if (dateRangeMatch) {
+      dateRange = dateRangeMatch[1].toUpperCase();
+      category = inputCategory.replace(/\s+(L7D|L30D|yesterday)$/i, "").trim();
     }
 
-    let response = `*Validation: ${category}*\n`;
-    response += `Found: ${result.foundBrands.length} brands\n`;
-    response += `Expected: ${result.expectedBrands.length} brands\n`;
-
-    if (result.missingBrands && result.missingBrands.length > 0) {
-      response += `\nMissing (${result.missingBrands.length}): ${result.missingBrands.join(", ")}\n`;
-    } else {
-      response += `\nNo missing brands!\n`;
+    // Get Central Sheet ID from List sheet
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const listSheet = ss.getSheetByName("List");
+    if (!listSheet) {
+      return "Error: List sheet not found";
     }
 
-    if (result.duplicates && result.duplicates.length > 0) {
-      response += `\nDuplicates (${result.duplicates.length}):\n`;
-      for (const dup of result.duplicates) {
-        response += `  - ${dup.brand} on ${dup.date}: ${dup.count}x\n`;
+    // Get category data: Column A = Category, Column B = Role, Column F = Spreadsheet ID
+    const listData = listSheet.getRange(2, 1, listSheet.getLastRow() - 1, 6).getValues();
+
+    let centralSheetId = null;
+    for (const row of listData) {
+      const cat = (row[0] || "").toString().trim();
+      const role = (row[1] || "").toString().trim(); // Column B (index 1)
+      // Only match Central sheets
+      if (cat.toLowerCase() === category.toLowerCase() && role === "Central") {
+        centralSheetId = (row[5] || "").toString().trim(); // Column F
+        category = cat; // Use exact case from List
+        break;
       }
     }
 
-    return response;
+    if (!centralSheetId) {
+      return `Error: Category "${category}" not found in List sheet, or no Central Sheet ID configured`;
+    }
+
+    // Extract marketplace code from category name (last 3 characters)
+    const marketplaceCode = category.slice(-3).toUpperCase();
+    if (!["SHO", "LAZ", "TIK", "TOK"].includes(marketplaceCode)) {
+      return `Error: Invalid marketplace code "${marketplaceCode}" in category "${category}"`;
+    }
+
+    // Determine which validation function to use based on category type
+    const isBADash = category.startsWith("BA Dash");
+
+    if (isBADash) {
+      // BA Dash uses date-based validation with Import sheet
+      const result = AHA_ValidateBADashBrands(category, centralSheetId, marketplaceCode, dateRange);
+
+      if (!result.success) {
+        return `Validation for ${category}: ${result.error || "Unknown error"}`;
+      }
+
+      if (result.skipped) {
+        return `Validation for ${category}: Skipped - ${result.reason}`;
+      }
+
+      let response = `*Validation: ${category}* (${dateRange})\n`;
+      response += `Expected: ${result.expectedCount} brands\n`;
+      response += `Date Range: ${result.totalDates} days checked\n`;
+      response += `Days with missing brands: ${result.datesWithMissing}\n`;
+
+      // Show per-date breakdown if there are missing brands
+      if (result.datesWithMissing > 0 && result.dateResults) {
+        response += `\n*Missing by Date:*\n`;
+        for (const dateResult of result.dateResults) {
+          if (dateResult.missingCount > 0) {
+            const missingList = dateResult.missingBrands.slice(0, 5).join(", ");
+            const more = dateResult.missingBrands.length > 5 ? ` +${dateResult.missingBrands.length - 5} more` : "";
+            response += `  ${dateResult.date}: ${dateResult.missingCount} missing (${missingList}${more})\n`;
+          }
+        }
+      } else {
+        response += `\nNo missing brands!\n`;
+      }
+
+      if (result.duplicates && result.duplicates.length > 0) {
+        response += `\n*Duplicates (${result.duplicateCount}):*\n`;
+        for (const dup of result.duplicates.slice(0, 10)) {
+          response += `  - ${dup.brand} on ${dup.date}: ${dup.count}x\n`;
+        }
+        if (result.duplicates.length > 10) {
+          response += `  ... and ${result.duplicates.length - 10} more\n`;
+        }
+      }
+
+      return response;
+
+    } else {
+      // BA Produk and other categories use simple brand validation
+      const result = AHA_ValidateBrands(category, centralSheetId, marketplaceCode);
+
+      if (!result.success) {
+        return `Validation for ${category}: ${result.error || "Unknown error"}`;
+      }
+
+      if (result.skipped) {
+        return `Validation for ${category}: Skipped - ${result.reason}`;
+      }
+
+      let response = `*Validation: ${category}*\n`;
+      response += `Expected: ${result.expectedCount} brands\n`;
+      response += `Found: ${result.foundCount} brands\n`;
+
+      if (result.missingCount > 0) {
+        const missingList = result.missingBrands.slice(0, 10).join(", ");
+        const more = result.missingBrands.length > 10 ? ` +${result.missingBrands.length - 10} more` : "";
+        response += `\n*Missing (${result.missingCount}):* ${missingList}${more}\n`;
+      } else {
+        response += `\nNo missing brands!\n`;
+      }
+
+      return response;
+    }
 
   } catch (e) {
-    return `Error validating ${category}: ${e.message}`;
+    return `Error validating ${inputCategory}: ${e.message}`;
   }
 }
 
@@ -622,6 +938,7 @@ function handleHistoryCommandDirect() {
 
 /**
  * Logs a message to the Command Log sheet
+ * Google Sheets cells can hold up to 50,000 characters
  */
 function logToCommandSheet(message) {
   try {
@@ -634,7 +951,8 @@ function logToCommandSheet(message) {
     }
 
     logSheet.insertRowAfter(1);
-    logSheet.getRange(2, 1, 1, 3).setValues([[new Date(), "CMD", message.substring(0, 1000)]]);
+    // Allow up to 32000 characters (leaving some buffer from 50k limit)
+    logSheet.getRange(2, 1, 1, 3).setValues([[new Date(), "CMD", message.substring(0, 32000)]]);
 
     // Keep only last 100 entries
     const lastRow = logSheet.getLastRow();

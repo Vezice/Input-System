@@ -312,13 +312,19 @@ function AHA_HandleSlackCommand(e) {
 
   // --- 2. Acknowledge the command in the Slack channel ---
   // --- MODIFICATION: Updated the text to include the 5-minute wait ---
-  const ackText = `👀 Processing your request, ${user}... *Adding a 5-minute delay* to allow Google Drive to sync. File processing will begin shortly.`;
-  const slackPayload = {
-    method: "post",
-    contentType: "application/json",
-    payload: JSON.stringify({ text: ackText })
-  };
-  UrlFetchApp.fetch(e.parameter.response_url, slackPayload);
+  // --- SLACK DISABLED: Only send if response_url is provided ---
+  const responseUrl = e.parameter.response_url;
+  if (responseUrl && responseUrl.trim() !== "") {
+    const ackText = `👀 Processing your request, ${user}... *Adding a 5-minute delay* to allow Google Drive to sync. File processing will begin shortly.`;
+    const slackPayload = {
+      method: "post",
+      contentType: "application/json",
+      payload: JSON.stringify({ text: ackText })
+    };
+    UrlFetchApp.fetch(responseUrl, slackPayload);
+  } else {
+    Logger.log("No response_url provided - skipping Slack acknowledgment");
+  }
   // --- END MODIFICATION ---
 
 
