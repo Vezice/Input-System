@@ -8,15 +8,22 @@
 function AHA_SlackNotify3(message) {
   const start = new Date();
   try {
+    // ========== SLACK DISABLED - LOG ONLY ==========
+    const workerCount = PropertiesService.getScriptProperties().getProperty("WORKER_COUNT");
+    const category = PropertiesService.getScriptProperties().getProperty("WORKER_CATEGORY");
+    const workerMessage = category + " - " + workerCount + " : " + message;
+
+    Logger.log("=== SLACK NOTIFICATION (DISABLED) ===");
+    Logger.log(workerMessage);
+    Logger.log("=====================================");
+
+    // ORIGINAL SLACK CODE - COMMENTED OUT
+    /*
     const url = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_URL");
     if (!url) {
       Logger.log("❌ Webhook URL not found. Run setSlackWebhookUrl() first.");
       return;
     }
-    const workerCount = PropertiesService.getScriptProperties().getProperty("WORKER_COUNT");
-    const category = PropertiesService.getScriptProperties().getProperty("WORKER_CATEGORY");
-
-    const workerMessage = category + " - " + workerCount + " : " + message;
 
     const payload = JSON.stringify({
       text: workerMessage,
@@ -28,18 +35,17 @@ function AHA_SlackNotify3(message) {
       method: "POST",
       contentType: "application/json",
       payload: payload,
-      muteHttpExceptions: false // Set to false to allow catch block to trigger
+      muteHttpExceptions: false
     };
 
-    // Wrap the UrlFetchApp call in the retry helper
     AHA_ExecuteWithRetry(() => {
       const response = UrlFetchApp.fetch(url, options);
       Logger.log("Slack response: " + response.getContentText());
-    }, 'Send Slack Notification', 3, 1000); // Retry 3 times, starting with a 1-second delay
+    }, 'Send Slack Notification', 3, 1000);
+    */
 
   } catch (err) {
-    // The retry helper will log the final failure, but we can log here too.
-    Logger.log(`❌ Slack notification failed permanently: ${err.message}`);
+    Logger.log(`❌ Slack notification error: ${err.message}`);
   } finally {
     const end = new Date();
     AHA_LogRuntime3(end - start);

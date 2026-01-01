@@ -1,38 +1,45 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Slack Setup.gs 
+// Slack Setup.gs
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 function AHA_SlackNotify3(message) {
   const start = new Date();
   try {
+    // ========== SLACK DISABLED - LOG ONLY ==========
+    const category = PropertiesService.getScriptProperties().getProperty("CENTRAL_CATEGORY");
+    const workerMessage = category + " - " + "*Central*" + " : " + message;
 
-  const url = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_URL");
-  if (!url) {
-    Logger.log("❌ Webhook URL not found. Run setSlackWebhookUrl() first.");
-    return;
-  }
+    Logger.log("=== SLACK NOTIFICATION (DISABLED) ===");
+    Logger.log(workerMessage);
+    Logger.log("=====================================");
 
-  const category = PropertiesService.getScriptProperties().getProperty("CENTRAL_CATEGORY");
+    // ORIGINAL SLACK CODE - COMMENTED OUT
+    /*
+    const url = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_URL");
+    if (!url) {
+      Logger.log("❌ Webhook URL not found. Run setSlackWebhookUrl() first.");
+      return;
+    }
 
+    const payload = JSON.stringify({
+      text: workerMessage,
+      username: "Google Sheets Bot",
+      icon_emoji: ":robot_face:"
+    });
 
-  const workerMessage = category + " - " + "*Central*" + " : " + message
+    const options = {
+      method: "POST",
+      contentType: "application/json",
+      payload: payload,
+      muteHttpExceptions: true
+    };
 
-  const payload = JSON.stringify({
-    text: workerMessage,
-    username: "Google Sheets Bot",
-    icon_emoji: ":robot_face:"
-  });
+    const response = UrlFetchApp.fetch(url, options);
+    Logger.log("Slack response: " + response.getContentText());
+    */
 
-  const options = {
-    method: "POST",
-    contentType: "application/json",
-    payload: payload,
-    muteHttpExceptions: true
-  };
-
-  const response = UrlFetchApp.fetch(url, options);
-  Logger.log("Slack response: " + response.getContentText());
-
+  } catch (err) {
+    Logger.log(`❌ Slack notification error: ${err.message}`);
   } finally {
     const end = new Date();
     AHA_LogRuntime3(end - start);

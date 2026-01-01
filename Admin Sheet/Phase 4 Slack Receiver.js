@@ -219,16 +219,38 @@ function cleanup(triggerId, jobId) {
 
 /**
  * Sends a response back to a Slack channel using the response_url.
+ * TEMPORARILY DISABLED - Slack is having issues. Logs to console instead.
  * @param {string} responseUrl The temporary URL provided by Slack for responding.
  * @param {string} text The message text to send.
  */
 function sendSlackResponse(responseUrl, text) {
+  // ========== SLACK DISABLED - LOG ONLY ==========
+  Logger.log("=== SLACK RESPONSE (DISABLED) ===");
+  Logger.log(`Response URL: ${responseUrl || "(none)"}`);
+  Logger.log(`Message: ${text}`);
+  Logger.log("=================================");
+
+  // Also write to the Admin Log sheet for visibility
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let logSheet = ss.getSheetByName("Command Log");
+    if (!logSheet) {
+      logSheet = ss.insertSheet("Command Log");
+      logSheet.getRange("A1:C1").setValues([["Timestamp", "Type", "Message"]]).setFontWeight("bold");
+    }
+    logSheet.insertRowAfter(1);
+    logSheet.getRange(2, 1, 1, 3).setValues([[new Date(), "RESPONSE", text.substring(0, 500)]]);
+  } catch (e) {
+    Logger.log("Could not write to Command Log: " + e.message);
+  }
+
+  // ORIGINAL SLACK CODE - COMMENTED OUT
+  /*
   if (!responseUrl) {
     Logger.log("Cannot send Slack response: response_url is missing.");
     return;
   }
 
-  // Truncate if too long to avoid Slack errors
   let finalText = text;
   if (text.length > 2900) {
     finalText = text.substring(0, 2900) + "\n...(truncated)";
@@ -247,6 +269,7 @@ function sendSlackResponse(responseUrl, text) {
   Logger.log(`Sending to Slack (${finalText.length} chars)`);
   UrlFetchApp.fetch(responseUrl, options);
   Logger.log(`Slack response sent`);
+  */
 }
 
 /**

@@ -30,6 +30,10 @@ SOURCE_FILES=(
     "BA Produk SHO/Central/Phase 3 Worker Management.js"
     "BA Produk SHO/Central/Phase 3 BigQuery Export.js"
 )
+
+# 3. Special handling for files that need different sources for Worker vs Central
+WORKER_SLACK_SETUP_SOURCE="BA Produk SHO/Worker 1/Phase 3 Slack Setup.js"
+CENTRAL_SLACK_SETUP_SOURCE="BA Produk SHO/Central/Phase 3 Slack Setup.js"
 # --- END CONFIGURATION ---
 
 
@@ -57,6 +61,23 @@ for (( i=0; i<${#TARGET_FILES[@]}; i++ )); do
             cp "$sourceFileName" "$file"
         fi
     done
+done
+
+# Special handling for Phase 3 Slack Setup.js (Worker vs Central have different code)
+echo -e "\n\033[0;36mProcessing Target: Phase 3 Slack Setup.js (Worker)\033[0m"
+find . -path "*/Worker */Phase 3 Slack Setup.js" | while read -r file; do
+    if [ "$file" != "./$WORKER_SLACK_SETUP_SOURCE" ]; then
+        echo "  -> Syncing to: $file"
+        cp "$WORKER_SLACK_SETUP_SOURCE" "$file"
+    fi
+done
+
+echo -e "\n\033[0;36mProcessing Target: Phase 3 Slack Setup.js (Central)\033[0m"
+find . -path "*/Central/Phase 3 Slack Setup.js" | while read -r file; do
+    if [ "$file" != "./$CENTRAL_SLACK_SETUP_SOURCE" ]; then
+        echo "  -> Syncing to: $file"
+        cp "$CENTRAL_SLACK_SETUP_SOURCE" "$file"
+    fi
 done
 
 echo -e "\n\033[0;32m✅ Batch synchronization complete.\033[0m"
