@@ -30,16 +30,6 @@ function onOpen() {
       .addItem('BA Produk SHO', 'CMD_Import_BAProdukSHO')
       .addItem('BA Produk TIK', 'CMD_Import_BAProdukTIK')
       .addItem('BA Produk LAZ', 'CMD_Import_BAProdukLAZ'))
-    .addSubMenu(ui.createMenu('Import: BA Iklan')
-      .addItem('BA Iklan SHO', 'CMD_Import_BAIklanSHO')
-      .addItem('BA Iklan TIK', 'CMD_Import_BAIklanTIK')
-      .addItem('BA Iklan TOK', 'CMD_Import_BAIklanTOK')
-      .addItem('BA Iklan LAZ', 'CMD_Import_BAIklanLAZ'))
-    .addSubMenu(ui.createMenu('Import: BA Promosi')
-      .addItem('BA Promosi SHO', 'CMD_Import_BAPromosiSHO')
-      .addItem('BA Promosi TIK', 'CMD_Import_BAPromosiTIK')
-      .addItem('BA Promosi TOK', 'CMD_Import_BAPromosiTOK')
-      .addItem('BA Promosi LAZ', 'CMD_Import_BAPromosiLAZ'))
     .addSubMenu(ui.createMenu('Import: Informasi SHO')
       .addItem('Informasi Dasar SHO', 'CMD_Import_InformasiDasarSHO')
       .addItem('Informasi Dikirim Dalam SHO', 'CMD_Import_InformasiDikirimDalamSHO')
@@ -308,18 +298,6 @@ function CMD_Import_BADashLAZ() { triggerCategoryImport("BA Dash LAZ"); }
 function CMD_Import_BAProdukSHO() { triggerCategoryImport("BA Produk SHO"); }
 function CMD_Import_BAProdukTIK() { triggerCategoryImport("BA Produk TIK"); }
 function CMD_Import_BAProdukLAZ() { triggerCategoryImport("BA Produk LAZ"); }
-
-// BA Iklan
-function CMD_Import_BAIklanSHO() { triggerCategoryImport("BA Iklan SHO"); }
-function CMD_Import_BAIklanTIK() { triggerCategoryImport("BA Iklan TIK"); }
-function CMD_Import_BAIklanTOK() { triggerCategoryImport("BA Iklan TOK"); }
-function CMD_Import_BAIklanLAZ() { triggerCategoryImport("BA Iklan LAZ"); }
-
-// BA Promosi
-function CMD_Import_BAPromosiSHO() { triggerCategoryImport("BA Promosi SHO"); }
-function CMD_Import_BAPromosiTIK() { triggerCategoryImport("BA Promosi TIK"); }
-function CMD_Import_BAPromosiTOK() { triggerCategoryImport("BA Promosi TOK"); }
-function CMD_Import_BAPromosiLAZ() { triggerCategoryImport("BA Promosi LAZ"); }
 
 // Informasi SHO
 function CMD_Import_InformasiDasarSHO() { triggerCategoryImport("Informasi Dasar SHO"); }
