@@ -21,17 +21,37 @@ function onOpen() {
     .addItem('Show System Status', 'CMD_Status')
     .addItem('Show History', 'CMD_History')
     .addSeparator()
-    .addSubMenu(ui.createMenu('Import Category')
+    .addSubMenu(ui.createMenu('Import: BA Dash')
       .addItem('BA Dash SHO', 'CMD_Import_BADashSHO')
       .addItem('BA Dash TIK', 'CMD_Import_BADashTIK')
       .addItem('BA Dash TOK', 'CMD_Import_BADashTOK')
-      .addItem('BA Dash LAZ', 'CMD_Import_BADashLAZ')
-      .addSeparator()
+      .addItem('BA Dash LAZ', 'CMD_Import_BADashLAZ'))
+    .addSubMenu(ui.createMenu('Import: BA Produk')
       .addItem('BA Produk SHO', 'CMD_Import_BAProdukSHO')
       .addItem('BA Produk TIK', 'CMD_Import_BAProdukTIK')
-      .addItem('BA Produk LAZ', 'CMD_Import_BAProdukLAZ')
-      .addSeparator()
-      .addItem('Custom Category...', 'CMD_ImportPrompt'))
+      .addItem('BA Produk LAZ', 'CMD_Import_BAProdukLAZ'))
+    .addSubMenu(ui.createMenu('Import: BA Iklan')
+      .addItem('BA Iklan SHO', 'CMD_Import_BAIklanSHO')
+      .addItem('BA Iklan TIK', 'CMD_Import_BAIklanTIK')
+      .addItem('BA Iklan TOK', 'CMD_Import_BAIklanTOK')
+      .addItem('BA Iklan LAZ', 'CMD_Import_BAIklanLAZ'))
+    .addSubMenu(ui.createMenu('Import: BA Promosi')
+      .addItem('BA Promosi SHO', 'CMD_Import_BAPromosiSHO')
+      .addItem('BA Promosi TIK', 'CMD_Import_BAPromosiTIK')
+      .addItem('BA Promosi TOK', 'CMD_Import_BAPromosiTOK')
+      .addItem('BA Promosi LAZ', 'CMD_Import_BAPromosiLAZ'))
+    .addSubMenu(ui.createMenu('Import: Informasi SHO')
+      .addItem('Informasi Dasar SHO', 'CMD_Import_InformasiDasarSHO')
+      .addItem('Informasi Dikirim Dalam SHO', 'CMD_Import_InformasiDikirimDalamSHO')
+      .addItem('Informasi Media SHO', 'CMD_Import_InformasiMediaSHO')
+      .addItem('Informasi Penjualan SHO', 'CMD_Import_InformasiPenjualanSHO'))
+    .addSubMenu(ui.createMenu('Import: Export SKU')
+      .addItem('Export SKU LAZ', 'CMD_Import_ExportSKULAZ')
+      .addItem('Export SKU TIK', 'CMD_Import_ExportSKUTIK'))
+    .addSubMenu(ui.createMenu('Import: BSL')
+      .addItem('Demografis BSL', 'CMD_Import_DemografisBSL')
+      .addItem('Proyeksi Stok BSL', 'CMD_Import_ProyeksiStokBSL'))
+    .addItem('Import Custom Category...', 'CMD_ImportPrompt')
     .addSeparator()
     .addItem('Setup Control Panel Sheet', 'CMD_SetupControlPanel')
     .addToUi();
@@ -278,13 +298,42 @@ function CMD_ImportPrompt() {
 }
 
 // Import shortcuts
+// BA Dash
 function CMD_Import_BADashSHO() { triggerCategoryImport("BA Dash SHO"); }
 function CMD_Import_BADashTIK() { triggerCategoryImport("BA Dash TIK"); }
 function CMD_Import_BADashTOK() { triggerCategoryImport("BA Dash TOK"); }
 function CMD_Import_BADashLAZ() { triggerCategoryImport("BA Dash LAZ"); }
+
+// BA Produk
 function CMD_Import_BAProdukSHO() { triggerCategoryImport("BA Produk SHO"); }
 function CMD_Import_BAProdukTIK() { triggerCategoryImport("BA Produk TIK"); }
 function CMD_Import_BAProdukLAZ() { triggerCategoryImport("BA Produk LAZ"); }
+
+// BA Iklan
+function CMD_Import_BAIklanSHO() { triggerCategoryImport("BA Iklan SHO"); }
+function CMD_Import_BAIklanTIK() { triggerCategoryImport("BA Iklan TIK"); }
+function CMD_Import_BAIklanTOK() { triggerCategoryImport("BA Iklan TOK"); }
+function CMD_Import_BAIklanLAZ() { triggerCategoryImport("BA Iklan LAZ"); }
+
+// BA Promosi
+function CMD_Import_BAPromosiSHO() { triggerCategoryImport("BA Promosi SHO"); }
+function CMD_Import_BAPromosiTIK() { triggerCategoryImport("BA Promosi TIK"); }
+function CMD_Import_BAPromosiTOK() { triggerCategoryImport("BA Promosi TOK"); }
+function CMD_Import_BAPromosiLAZ() { triggerCategoryImport("BA Promosi LAZ"); }
+
+// Informasi SHO
+function CMD_Import_InformasiDasarSHO() { triggerCategoryImport("Informasi Dasar SHO"); }
+function CMD_Import_InformasiDikirimDalamSHO() { triggerCategoryImport("Informasi Dikirim Dalam SHO"); }
+function CMD_Import_InformasiMediaSHO() { triggerCategoryImport("Informasi Media SHO"); }
+function CMD_Import_InformasiPenjualanSHO() { triggerCategoryImport("Informasi Penjualan SHO"); }
+
+// Export SKU
+function CMD_Import_ExportSKULAZ() { triggerCategoryImport("Export SKU LAZ"); }
+function CMD_Import_ExportSKUTIK() { triggerCategoryImport("Export SKU TIK"); }
+
+// BSL
+function CMD_Import_DemografisBSL() { triggerCategoryImport("Demografis BSL"); }
+function CMD_Import_ProyeksiStokBSL() { triggerCategoryImport("Proyeksi Stok BSL"); }
 
 /**
  * Triggers a category import by calling the Central sheet's webhook
