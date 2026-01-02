@@ -48,8 +48,7 @@ function AHA_AssignTempSheetToCategory2(categoryName) {
         sheet.clear(); // Ensure the sheet is empty before use.
         sheet.setName(newName);
         
-        AHA_SlackNotify3(`✅ *Completed*: Assigned and cleared ${temp} for ${newName}`);
-        Logger.log(`✅ Renamed ${temp} to ${newName}`);
+        Logger.log(`✅ Assigned and cleared ${temp} for ${newName}`);
         return newName; // Success!
       }
     }
@@ -275,7 +274,7 @@ function AHA_ImportCategoryBatchInBatches2() {
                                 inputSheet.getRange(rowIndex, 4).setValue("Added");
                                 const logMsg = `✅ Imported to ${targetSheet.getName()}` + (isAnEmptyFile ? " (0 rows added)" : "");
                                 logSheet.appendRow([new Date(), fileName, logMsg]);
-                                AHA_SlackNotify3(`✅ *Completed*: ${fileName} Imported to ${targetSheet.getName()}` + (isAnEmptyFile ? " (0 rows added)" : ""));
+                                Logger.log(`✅ Imported: ${fileName} to ${targetSheet.getName()}` + (isAnEmptyFile ? " (0 rows added)" : ""));
                                 break; 
                             } else {
                                 throw new Error(`Processing function for ${category} returned an unexpected error.`);
@@ -954,7 +953,6 @@ function AHA_FinalizeAllTempSheets2() {
       if (old) ss.deleteSheet(old); // Delete the old version.
       sheet.setName(finalName); // Promote the temp sheet.
       Logger.log(`✅ Finalized temp sheet ${finalName}`);
-      AHA_SlackNotify3(`✅ *Completed*: Finalized temp sheet ${finalName}!`);
     });
   } finally {
     const end = new Date();
@@ -1014,7 +1012,6 @@ function AHA_CreateNextTempSheet2() {
           // This code only runs if the retry block succeeds
           controlSheet.getRange(i + 2, 2).setValue("Done");
           Logger.log(`✅ Created/Cleared temp sheet: ${name}`);
-          AHA_SlackNotify3(`✅ *Completed*: Created/Cleared temp sheet - ${name}!`);
 
         } catch (err) {
           // This block runs only if ALL retries fail
@@ -1078,7 +1075,6 @@ function AHA_DeleteUnusedTempSheets2() {
     if (sheet) {
       ss.deleteSheet(sheet);
       Logger.log(`🗑️ Deleted unused temp sheet: ${name}`);
-      AHA_SlackNotify3(`🗑️ Deleted unused temp sheet: ${name}`);
     }
   });
 }

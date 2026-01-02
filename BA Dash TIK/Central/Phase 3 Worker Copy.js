@@ -90,7 +90,6 @@ function AHA_SetConfigurationForCategory3() {
   // const ui = SpreadsheetApp.getUi();
   // ui.alert('✅ Success!', `Configuration for category "${targetCategory}" has been set.\n\nCentral ID Found: ${foundCentral}\nWorker IDs Found: ${workersFound}`, ui.ButtonSet.OK);
   Logger.log(`Configuration set. Central: ${foundCentral}, Workers: ${workersFound}`);
-  AHA_SlackNotify3(`Configuration set. Central: ${foundCentral}, Workers: ${workersFound}`);
 }
 
 
@@ -248,7 +247,6 @@ function AHA_HandleWorkerNotification(e) {
 
   dashboardSheet.getRange(targetRowIndexInSheet, DASHBOARD_STATUS_COL).setValue('Done');
   Logger.log(`Updated status for Category: ${category}, Worker: ${worker} to 'Done'.`);
-  AHA_SlackNotify3(`✅ *${worker}* for *${category}* status updated to 'Done'.`);
 
   const updatedControlRange = dashboardSheet.getRange(DASHBOARD_START_ROW, DASHBOARD_CATEGORY_COL, DASHBOARD_CONTROL_ROWS, 3).getValues();
   let allWorkersDoneForCategory = true;
@@ -279,7 +277,7 @@ function AHA_HandleWorkerNotification(e) {
       ScriptApp.newTrigger('AHA_ProcessMergeBatch3').timeBased().after(10 * 1000).create();
     }
   } else {
-    AHA_SlackNotify3(`⏳ *Workers Pending*: Not all workers for *${category}* are done yet.`);
+    Logger.log(`⏳ Workers Pending: Not all workers for ${category} are done yet.`);
   }
   return ContentService.createTextOutput('OK').setMimeType(ContentService.MimeType.TEXT);
 }
@@ -419,7 +417,6 @@ function AHA_ProcessMergeBatch3() {
     tempSheet = targetSS.insertSheet(tempSheetName);
     tempSheet.getRange(1, 1, tempSheet.getMaxRows(), tempSheet.getMaxColumns()).setNumberFormat("@");
     Logger.log(`Created new temporary sheet: ${tempSheetName}`);
-    AHA_SlackNotify3(`✨ *Merge Process*: Created and formatted new temporary sheet: ${tempSheetName}.`);
   } else {
     tempSheet = targetSS.getSheetByName(tempSheetName);
     if (!tempSheet) {
@@ -463,13 +460,11 @@ function AHA_ProcessMergeBatch3() {
       
       // Force Plain Text (@) formatting BEFORE pasting to preserve "04 December 2025" as-is
       targetRange.setNumberFormat("@").setValues(rowsToCopy);
-      
-      AHA_SlackNotify3(`➡️ *Merge Process*: Copied ${rowsToCopy.length} rows from *${worker}* for *${category}*.`);
+
       Logger.log(`Copied ${rowsToCopy.length} rows from ${worker} for ${category}.`);
     }
   } else {
     Logger.log(`${worker} for ${category} had no data to copy.`);
-    AHA_SlackNotify3(`⚠️ *Merge Process*: *${worker}* for *${category}* had no data to copy.`);
   }
 
   if (workerIndex < workersToProcess.length - 1) {
@@ -540,8 +535,7 @@ function AHA_ProcessBADashMergeBatch3() {
           const targetRange = tempSheet.getRange(1, 1, originalData.length, originalData[0].length);
           // Force Plain Text formatting to prevent auto-conversion
           targetRange.setNumberFormat("@").setValues(originalData);
-          
-          AHA_SlackNotify3(`📋 *BA Dash Merge*: Copied ${originalData.length} existing rows from *${category}*.`);
+
           Logger.log(`Copied ${originalData.length} existing rows from '${category}'.`);
       }
     }
@@ -578,15 +572,12 @@ function AHA_ProcessBADashMergeBatch3() {
         targetRange.setNumberFormat("@").setValues(rowsToCopy);
 
         Logger.log(`Appended ${rowsToCopy.length} rows from ${worker} for ${category}.`);
-        AHA_SlackNotify3(`➡️ *BA Dash Merge*: Appended ${rowsToCopy.length} rows from *${worker}* for *${category}*.`);
       }
     } else {
       Logger.log(`${worker} for ${category} had no data rows to append.`);
-      AHA_SlackNotify3(`⚠️ *BA Dash Merge*: ${worker} for ${category} had no data rows to append. Skipping.`);
     }
   } else {
     Logger.log(`Source sheet '${category}' not found in worker '${worker}'. Skipping.`);
-    AHA_SlackNotify3(`⚠️ *BA Dash Merge*: Source sheet '${category}' not found in *${worker}*. Skipping.`);
   }
 
   if (workerIndex < workersToProcess.length - 1) {
@@ -623,7 +614,6 @@ function AHA_FinalizeMerge3(category, tempSheetName) {
   if (oldSheet) {
     targetSS.deleteSheet(oldSheet);
     Logger.log(`Deleted old category sheet: ${category}`);
-    AHA_SlackNotify3(`🗑️ *Merge Process*: Deleted old category sheet: *${category}*.`);
   }
   tempSheet.setName(category);
   Logger.log(`Renamed temporary sheet to '${category}'. Merge complete.`);
@@ -638,7 +628,6 @@ function AHA_FinalizeMerge3(category, tempSheetName) {
     }
   }
   Logger.log(`Updated dashboard statuses for '${category}' to 'Imported'.`);
-  AHA_SlackNotify3(`📊 *Dashboard Update*: Status for category *${category}* set to 'Imported'.`);
   
   controlSheet.getRange("A1").setValue("SCRIPT OFFLINE");
 

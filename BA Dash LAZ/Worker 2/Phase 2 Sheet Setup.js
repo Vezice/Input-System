@@ -185,7 +185,6 @@ function AHA_PrepareTempSheet2(sourceSheetName) {
     rangeToFormat.setNumberFormat("@");
 
     Logger.log(`✅ Temp sheet '${tempSheetName}' prepared.`);
-    AHA_SlackNotify3("✅ *Completed* : Temp sheet " + tempSheetName + " prepared!");
     return tempSheetName;
 
   } finally {
@@ -226,7 +225,6 @@ function AHA_TempSheetBAProdukSHO2(sourceSheetName = "BA Produk SHO") {
     const rangeToFormat = tempSheet.getRange(2, 1, formatRows, headers.length);
     rangeToFormat.setNumberFormat("@");
 
-    AHA_SlackNotify3("✅ *Completed* : Temp sheet " + tempSheetName + " prepared!");
     Logger.log(`✅ Temp sheet '${tempSheetName}' prepared.`);
     return tempSheetName;
 
@@ -259,7 +257,6 @@ function AHA_FinalizeSheetSwap2(originalName = 'BA Produk SHO') {
     // Rename the temp sheet to the final name.
     tempSheet.setName(originalName);
 
-    AHA_SlackNotify3("✅ *Completed* : Sheet Temp " + originalName + " replaced the original!");
     Logger.log(`✅ Sheet Temp '${originalName}' replaced the original.`);
     logSheet.appendRow([new Date(), "Finalize Sheet Swap", "✅ Sheet Temp '${originalName}' replaced the original."]);
 

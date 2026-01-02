@@ -429,7 +429,7 @@ function AHA_ValidationBatch2() {
             const lower = name.toLowerCase();
             if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
                 results.push([parentFolderName, name, processingStatus, category, validationResult]);
-                AHA_SlackNotify3(`Validated File: ${parentFolderName}, ${name}, ${processingStatus}, ${category}, ${validationResult}`);
+                Logger.log(`Validated File: ${parentFolderName}, ${name}, ${processingStatus}, ${category}, ${validationResult}`);
             }
 
             processedCount++;

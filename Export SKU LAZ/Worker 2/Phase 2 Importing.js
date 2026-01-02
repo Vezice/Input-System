@@ -89,7 +89,6 @@ function AHA_SortValidationList2() {
     sheet.getRange(startRow, startCol, data.length, numCols).setValues(data);
 
     Logger.log("✅ Validation results sorted by category and folder name.");
-    AHA_SlackNotify3("✅ *Completed* : Validation results sorted by category and folder name.");
 
   } finally {
     const end = new Date();
