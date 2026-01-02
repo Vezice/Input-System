@@ -127,7 +127,8 @@ function doPost(e) {
     try {
       const jsonData = JSON.parse(e.postData.contents);
       if (jsonData.command === "ping") {
-        const category = PropertiesService.getScriptProperties().getProperty("CENTRAL_CATEGORY") || "Unknown";
+        // Refresh configuration (including Slack webhook URL) from Links List
+        AHA_SetConfigurationForCategory3();
         AHA_SlackNotify3(`:green_ball: Online`);
         return ContentService.createTextOutput("PONG").setMimeType(ContentService.MimeType.TEXT);
       }

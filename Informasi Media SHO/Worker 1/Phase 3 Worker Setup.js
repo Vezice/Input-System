@@ -97,6 +97,8 @@ function doPost(e) {
 
   // --- PING COMMAND HANDLER (for /ibot pingall) ---
   if (data.command === 'ping') {
+    // Refresh configuration (including Slack webhook URL) from Links List
+    AHA_SetWorkerConfiguration3();
     AHA_SlackNotify3(`:green_ball: Online`);
     return ContentService.createTextOutput("PONG").setMimeType(ContentService.MimeType.TEXT);
   }
