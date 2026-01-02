@@ -128,7 +128,7 @@ function doPost(e) {
       if (jsonData.command === "ping") {
         // Refresh configuration (including Slack webhook URL) from Links List
         AHA_SetConfigurationForCategory3();
-        AHA_SlackNotify3(`:green_ball: Online`);
+        AHA_SlackNotify3(`🟢 Online`);
         return ContentService.createTextOutput("PONG").setMimeType(ContentService.MimeType.TEXT);
       }
     } catch (jsonErr) {

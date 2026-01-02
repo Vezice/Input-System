@@ -99,7 +99,7 @@ function doPost(e) {
   if (data.command === 'ping') {
     // Refresh configuration (including Slack webhook URL) from Links List
     AHA_SetWorkerConfiguration3();
-    AHA_SlackNotify3(`:green_ball: Online`);
+    AHA_SlackNotify3(`🟢 Online`);
     return ContentService.createTextOutput("PONG").setMimeType(ContentService.MimeType.TEXT);
   }
 
