@@ -159,7 +159,7 @@ function AHA_PrepareTempSheet2(sourceSheetName) {
     const tempPrefix = 'Temp ';
     const sourceSheet = ss.getSheetByName(sourceSheetName);
     if (!sourceSheet) {
-      AHA_SlackNotify3("❌ *Error* : Source sheet " + sourceSheetName + " not found! <@U08TUF8LW2H>");
+      AHA_SlackNotify3("❌ *Error* : Source sheet " + sourceSheetName + " not found! <@U0A6B24777X>");
       throw new Error(`Source sheet '${sourceSheetName}' not found.`);
     }
 
@@ -207,7 +207,7 @@ function AHA_TempSheetBAProdukSHO2(sourceSheetName = "BA Produk SHO") {
     const tempPrefix = 'Temp ';
     const sourceSheet = ss.getSheetByName(sourceSheetName);
     if (!sourceSheet) {
-      AHA_SlackNotify3("❌ *Error* : Source sheet " + sourceSheetName + " not found! <@U08TUF8LW2H>");
+      AHA_SlackNotify3("❌ *Error* : Source sheet " + sourceSheetName + " not found! <@U0A6B24777X>");
       throw new Error(`Source sheet '${sourceSheetName}' not found.`);
     }
 
@@ -290,7 +290,7 @@ function AHA_CreateTempSheet2(tempSheetName) {
       tempSheet = ss.insertSheet(tempSheetName, { template: null });
       AHA_TrimSheetSize2(tempSheet); // Immediately trim it to reduce cell count.
     } catch (e) {
-      AHA_SlackNotify3("❌ *Error* : Creating temp sheet failed - " + e.message + " <@U08TUF8LW2H>");
+      AHA_SlackNotify3("❌ *Error* : Creating temp sheet failed - " + e.message + " <@U0A6B24777X>");
       Logger.log(`⚠️ First attempt failed: ${e.message} - Tolong hapus sheet "${tempSheetName}"`);
       logSheet.appendRow([new Date(), "Create Temp Sheet", `❌ First attempt failed. Tolong hapus sheet '${tempSheetName}'`]);
 

@@ -9,7 +9,7 @@
 const BRAND_VALIDATION_CONFIG = {
   ADMIN_SHEET_ID: "11aYJSWTW7xxZcyfREdcvGoUhgPnl4xU8MQM6lE1se4M",
   SLACK_WEBHOOK_URL: "", // Will be set from script properties
-  ADMIN_USER_TAG: "<@U08TUF8LW2H>"
+  ADMIN_USER_TAG: "<@U0A6B24777X>"
 };
 
 /**

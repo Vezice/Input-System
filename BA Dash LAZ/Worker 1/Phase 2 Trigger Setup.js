@@ -175,7 +175,7 @@ function AHA_SystemWatchdog() {
         if (files.hasNext()) {
           // There ARE pending files but system is OFFLINE - this is wrong!
           const workerName = properties.getProperty("WORKER_NAME") || "Unknown Worker";
-          AHA_SlackNotify3(`🚨 *Watchdog Alert*: ${workerName} is OFFLINE but has pending files in Move folder! Restarting validation... <@U08TUF8LW2H>`);
+          AHA_SlackNotify3(`🚨 *Watchdog Alert*: ${workerName} is OFFLINE but has pending files in Move folder! Restarting validation... <@U0A6B24777X>`);
           properties.deleteProperty("RESTART_COUNT_VALIDATING");
           properties.deleteProperty("RESTART_COUNT_IMPORTING");
           AHA_StartValTrigger2(1); // Restart the process
@@ -206,7 +206,7 @@ function AHA_SystemWatchdog() {
       if (restartCount >= MAX_RESTARTS) {
         // --- QUARANTINE ---
         Logger.log(`CRITICAL: VALIDATING stage has been stale for 10+ minutes and failed ${restartCount} restarts. Triggering quarantine.`);
-        AHA_SlackNotify3(`🚨 *CRITICAL FAILURE*: System is STALE. Restart attempts failed. Triggering "Poison Pill" Quarantine. <@U08TUF8LW2H>`);
+        AHA_SlackNotify3(`🚨 *CRITICAL FAILURE*: System is STALE. Restart attempts failed. Triggering "Poison Pill" Quarantine. <@U0A6B24777X>`);
         AHA_QuarantinePoisonPill(); // This is the function from our previous discussion
         // Clear stale folder ID to prevent "Invalid argument: id" errors
         properties.deleteProperty("MOVE_FOLDER_ID");
@@ -236,7 +236,7 @@ function AHA_SystemWatchdog() {
     if (lastHeartbeat === 0 || (now - lastHeartbeat) > STALENESS_LIMIT_MS) {
       const restartCount = Number(properties.getProperty("RESTART_COUNT_IMPORTING") || 0);
       if (restartCount >= MAX_RESTARTS) {
-        AHA_SlackNotify3(`🚨 *CRITICAL FAILURE*: IMPORTING process is STALE and failed ${restartCount} restarts. Shutting down. <@U08TUF8LW2H>`);
+        AHA_SlackNotify3(`🚨 *CRITICAL FAILURE*: IMPORTING process is STALE and failed ${restartCount} restarts. Shutting down. <@U0A6B24777X>`);
         AHA_RunArchiving(); // Shut down
       } else {
         const newCount = restartCount + 1;
@@ -301,7 +301,7 @@ function AHA_QuarantinePoisonPill() {
       AHA_LogFailureToDoc(fileName, "Poison Pill Quarantine (Auto-Removed by Watchdog)", category, workerName);
 
       // 3. Send a critical alert
-      AHA_SlackNotify3(`🚨 *POISON PILL QUARANTINED*: The file *${fileName}* was causing a persistent crash loop and has been moved to the Failed folder. The system will now retry. <@U08TUF8LW2H>`);
+      AHA_SlackNotify3(`🚨 *POISON PILL QUARANTINED*: The file *${fileName}* was causing a persistent crash loop and has been moved to the Failed folder. The system will now retry. <@U0A6B24777X>`);
       Logger.log(`🚨 QUARANTINED: ${fileName}`);
 
       // 4. Reset the restart counter so the system can try again
@@ -312,7 +312,7 @@ function AHA_QuarantinePoisonPill() {
     }
   } catch (err) {
     Logger.log(`CRITICAL ERROR in AHA_QuarantinePoisonPill: ${err.message}`);
-    AHA_SlackNotify3(`❌ *CRITICAL FAILURE* in Watchdog's quarantine function: ${err.message} <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`❌ *CRITICAL FAILURE* in Watchdog's quarantine function: ${err.message} <@U0A6B24777X>`);
   }
 }
 
@@ -427,7 +427,7 @@ function AHA_RunFinalization() {
       .create();
 
   } catch (e) {
-    AHA_SlackNotify3(`❌ *Error*: Cleanup Step 'Finalization' failed: ${e.message} <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`❌ *Error*: Cleanup Step 'Finalization' failed: ${e.message} <@U0A6B24777X>`);
     // Do not proceed. The watchdog will restart this step.
   }
 }
@@ -468,7 +468,7 @@ function AHA_RunArchiving() {
     Logger.log("Watchdog trigger deleted. Worker process complete.");
 
   } catch (e) {
-    AHA_SlackNotify3(`❌ *Error*: Cleanup Step 'Archiving' failed: ${e.message} <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`❌ *Error*: Cleanup Step 'Archiving' failed: ${e.message} <@U0A6B24777X>`);
   }
 }
 

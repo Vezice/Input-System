@@ -40,7 +40,7 @@ function AHA_StartWorkers3() {
   } catch (e) {
     const errorMessage = `❌ Error in AHA_StartWorkers3: ${e.message}`;
     Logger.log(errorMessage);
-    AHA_SlackNotify3(`${errorMessage} <@U08TUF8LW2H>`); // Notify with specific error
+    AHA_SlackNotify3(`${errorMessage} <@U0A6B24777X>`); // Notify with specific error
   }
 }
 
@@ -61,7 +61,7 @@ function AHA_SplitFilesToWorkers3(ss, category) {
   const moveFolder = DriveApp.getFolderById(moveFolderId);
   if (!moveFolder) {
     const errorMsg = `❌ Error: Base 'Move' folder not found by ID: ${moveFolderId}.`;
-    AHA_SlackNotify3(`${errorMsg} <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`${errorMsg} <@U0A6B24777X>`);
     throw new Error(errorMsg);
   }
 
@@ -132,7 +132,7 @@ function AHA_SplitFilesToWorkers3(ss, category) {
         movedCounts[targetWorkerIndex - 1]++;
       } catch (e) {
         Logger.log(`❌ Could not move "${file.getName()}" to Worker ${targetWorkerIndex}: ${e.message}`);
-        AHA_SlackNotify3(`❌ Error moving "${file.getName()}" to Worker ${targetWorkerIndex}: ${e.message} <@U08TUF8LW2H>`);
+        AHA_SlackNotify3(`❌ Error moving "${file.getName()}" to Worker ${targetWorkerIndex}: ${e.message} <@U0A6B24777X>`);
       }
     });
 
@@ -157,7 +157,7 @@ function AHA_SplitFilesToWorkers3(ss, category) {
   // Check if the loop ended because it's still not empty
   if (attempt >= maxAttempts && uploadHere.getFiles().hasNext()) {
     Logger.log(`❌ FAILED: Files are still in 'Upload Here' after ${maxAttempts} attempts. Stopping process.`);
-    AHA_SlackNotify3(`❌ *CRITICAL*: Files are still stuck in 'Upload Here' for *${category}* after ${maxAttempts} attempts. Manual check needed. <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`❌ *CRITICAL*: Files are still stuck in 'Upload Here' for *${category}* after ${maxAttempts} attempts. Manual check needed. <@U0A6B24777X>`);
     return false; // Return false because the split failed
   }
   
@@ -295,7 +295,7 @@ function AHA_ResetWorkerCopyStatus(ss, targetCategory, workerNames = ["Worker 1"
   } catch (error) {
     const fatalMsg = `❌ *Fatal Error* in ResetWorkerCopyStatus: ${error.message}`;
     Logger.log(fatalMsg);
-    AHA_SlackNotify3(`${fatalMsg} <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`${fatalMsg} <@U0A6B24777X>`);
   } finally {
     // Assuming AHA_LogRuntime3 is available globally
     // AHA_LogRuntime3(new Date() - start); 

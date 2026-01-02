@@ -56,7 +56,7 @@ function AHA_ExportToBigQuery3(category) {
   } catch (err) {
     const errorMsg = `❌ BigQuery Export Error for ${category}: ${err.message}`;
     Logger.log(errorMsg);
-    AHA_SlackNotify3(`${errorMsg} <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`${errorMsg} <@U0A6B24777X>`);
     // Don't throw - BigQuery failure shouldn't block main pipeline
   }
 }

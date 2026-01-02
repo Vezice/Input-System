@@ -21,7 +21,7 @@ const CONFIG = {
     MOVE_FOLDER: "1zQEPDi4dI3gUJiEKYp-GQI8lfNFwL1sh" // The base folder where files to be processed are initially located.
   },
   SLACK: { // Slack integration settings.
-    MENTION_USER: "<@U08TUF8LW2H>" // The Slack user ID to mention in notifications.
+    MENTION_USER: "<@U0A6B24777X>" // The Slack user ID to mention in notifications.
   }
 };
 

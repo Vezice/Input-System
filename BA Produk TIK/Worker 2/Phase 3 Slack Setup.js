@@ -8,17 +8,14 @@
 function AHA_SlackNotify3(message) {
   const start = new Date();
   try {
-    // ========== SLACK DISABLED - LOG ONLY ==========
     const workerCount = PropertiesService.getScriptProperties().getProperty("WORKER_COUNT");
     const category = PropertiesService.getScriptProperties().getProperty("WORKER_CATEGORY");
     const workerMessage = category + " - " + workerCount + " : " + message;
 
-    Logger.log("=== SLACK NOTIFICATION (DISABLED) ===");
+    // Always log
     Logger.log(workerMessage);
-    Logger.log("=====================================");
 
-    // ORIGINAL SLACK CODE - COMMENTED OUT
-    /*
+    // Send to Slack
     const url = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_URL");
     if (!url) {
       Logger.log("❌ Webhook URL not found. Run setSlackWebhookUrl() first.");
@@ -42,7 +39,6 @@ function AHA_SlackNotify3(message) {
       const response = UrlFetchApp.fetch(url, options);
       Logger.log("Slack response: " + response.getContentText());
     }, 'Send Slack Notification', 3, 1000);
-    */
 
   } catch (err) {
     Logger.log(`❌ Slack notification error: ${err.message}`);

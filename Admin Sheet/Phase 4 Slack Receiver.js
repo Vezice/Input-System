@@ -153,6 +153,10 @@ function processAndForwardCommand(e) {
         handleValidateAllCommand(payloadParams.response_url);
         break;
 
+      case 'pingall':
+        handlePingAllCommand(payloadParams.response_url);
+        break;
+
       default:
         // If no other command matches, assume it's a category to be forwarded.
         const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(linksSheetName);
@@ -219,16 +223,12 @@ function cleanup(triggerId, jobId) {
 
 /**
  * Sends a response back to a Slack channel using the response_url.
- * TEMPORARILY DISABLED - Slack is having issues. Logs to console instead.
  * @param {string} responseUrl The temporary URL provided by Slack for responding.
  * @param {string} text The message text to send.
  */
 function sendSlackResponse(responseUrl, text) {
-  // ========== SLACK DISABLED - LOG ONLY ==========
-  Logger.log("=== SLACK RESPONSE (DISABLED) ===");
-  Logger.log(`Response URL: ${responseUrl || "(none)"}`);
-  Logger.log(`Message: ${text}`);
-  Logger.log("=================================");
+  // Always log
+  Logger.log(`Slack Response: ${text}`);
 
   // Also write to the Admin Log sheet for visibility
   try {
@@ -244,8 +244,7 @@ function sendSlackResponse(responseUrl, text) {
     Logger.log("Could not write to Command Log: " + e.message);
   }
 
-  // ORIGINAL SLACK CODE - COMMENTED OUT
-  /*
+  // Send to Slack
   if (!responseUrl) {
     Logger.log("Cannot send Slack response: response_url is missing.");
     return;
@@ -269,7 +268,6 @@ function sendSlackResponse(responseUrl, text) {
   Logger.log(`Sending to Slack (${finalText.length} chars)`);
   UrlFetchApp.fetch(responseUrl, options);
   Logger.log(`Slack response sent`);
-  */
 }
 
 /**
@@ -548,6 +546,7 @@ function handleHelpCommand(responseUrl) {
 • \`/ibot status\` - System health check
 • \`/ibot history\` - Recent import activities
 • \`/ibot dashboard\` - Get dashboard link
+• \`/ibot pingall\` - Ping all projects to check connectivity
 • \`/ibot help\` - Show this help message
 • \`/ibot test\` - Test bot connectivity`;
 
@@ -826,5 +825,91 @@ function handleValidateAllCommand(responseUrl) {
 
   } catch (e) {
     sendSlackResponse(responseUrl, `❌ Error during validation: ${e.message}`);
+  }
+}
+
+
+/**
+ * Handles the /ibot pingall command - pings all projects and reports their status
+ */
+function handlePingAllCommand(responseUrl) {
+  try {
+    sendSlackResponse(responseUrl, "🏓 Pinging all projects... Please wait.");
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const listSheet = ss.getSheetByName("List");
+
+    if (!listSheet) {
+      sendSlackResponse(responseUrl, "❌ List sheet not found.");
+      return;
+    }
+
+    // Get all projects from List sheet
+    // Columns: A=Category/Type, B=Role, C=Link, D=Apps Script, E=Upload Folder, F=Spreadsheet ID, G=Apps Script Deployment URL
+    const listData = listSheet.getRange(2, 1, listSheet.getLastRow() - 1, 7).getValues();
+
+    const results = [];
+    let onlineCount = 0;
+    let offlineCount = 0;
+    let totalProjects = 0;
+
+    // Build array of ping requests
+    const pingRequests = [];
+
+    for (const row of listData) {
+      const category = (row[0] || "").toString().trim();
+      const role = (row[1] || "").toString().trim();
+      const deploymentUrl = (row[6] || "").toString().trim(); // Column G (index 6)
+
+      if (!category || !role || !deploymentUrl) continue;
+
+      totalProjects++;
+      pingRequests.push({
+        category: category,
+        role: role,
+        url: deploymentUrl
+      });
+    }
+
+    // Send ping requests (using fetchAll for parallel execution)
+    const requests = pingRequests.map(project => ({
+      url: project.url,
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ command: 'ping' }),
+      muteHttpExceptions: true
+    }));
+
+    // Execute all requests in parallel
+    const responses = UrlFetchApp.fetchAll(requests);
+
+    // Process responses
+    for (let i = 0; i < responses.length; i++) {
+      const project = pingRequests[i];
+      const response = responses[i];
+      const statusCode = response.getResponseCode();
+      const responseText = response.getContentText().trim();
+
+      if (statusCode === 200 && (responseText === 'PONG' || responseText.includes('Online'))) {
+        onlineCount++;
+        results.push(`${project.category} - ${project.role}: :green_ball: Online`);
+      } else {
+        offlineCount++;
+        results.push(`${project.category} - ${project.role}: :red_circle: Offline (${statusCode})`);
+      }
+    }
+
+    // Build summary message
+    let message = `🏓 *Ping Results*\n\n`;
+    message += `*Total:* ${totalProjects} projects\n`;
+    message += `*Online:* ${onlineCount} :green_ball:\n`;
+    message += `*Offline:* ${offlineCount} :red_circle:\n\n`;
+    message += `*Details:*\n`;
+    message += results.join("\n");
+
+    sendSlackResponse(responseUrl, message);
+
+  } catch (e) {
+    sendSlackResponse(responseUrl, `❌ Error during ping: ${e.message}`);
   }
 }

@@ -95,6 +95,12 @@ function doPost(e) {
   const secretToken = 'CuanCengliCincai';
   const data = JSON.parse(e.postData.contents || '{}');
 
+  // --- PING COMMAND HANDLER (for /ibot pingall) ---
+  if (data.command === 'ping') {
+    AHA_SlackNotify3(`:green_ball: Online`);
+    return ContentService.createTextOutput("PONG").setMimeType(ContentService.MimeType.TEXT);
+  }
+
   if (data.token !== secretToken) {
     return ContentService.createTextOutput("Unauthorized")
       .setMimeType(ContentService.MimeType.TEXT);
@@ -202,7 +208,7 @@ function AHA_NotifyCentral3() {
 
   } catch (err) {
     Logger.log(`❌ Failed to notify central sheet after all retries: ${err.message}`);
-    AHA_SlackNotify3(`❌ Worker *${properties.getProperty("WORKER_COUNT")}* for *${properties.getProperty("WORKER_CATEGORY")}*: Failed to notify central sheet after all retries. <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`❌ Worker *${properties.getProperty("WORKER_COUNT")}* for *${properties.getProperty("WORKER_CATEGORY")}*: Failed to notify central sheet after all retries. <@U0A6B24777X>`);
   } finally {
     const end = new Date();
     AHA_LogRuntime3(end - start);

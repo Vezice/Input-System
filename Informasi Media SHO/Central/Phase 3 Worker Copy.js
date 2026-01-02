@@ -121,6 +121,21 @@ function doPost(e) {
   const lock = LockService.getScriptLock();
   const LOCK_TIMEOUT_MS = 30000; // 30 seconds
 
+  // --- PING COMMAND HANDLER (for /ibot pingall) ---
+  // Check if this is a JSON ping request
+  if (e.postData && e.postData.type === "application/json") {
+    try {
+      const jsonData = JSON.parse(e.postData.contents);
+      if (jsonData.command === "ping") {
+        const category = PropertiesService.getScriptProperties().getProperty("CENTRAL_CATEGORY") || "Unknown";
+        AHA_SlackNotify3(`:green_ball: Online`);
+        return ContentService.createTextOutput("PONG").setMimeType(ContentService.MimeType.TEXT);
+      }
+    } catch (jsonErr) {
+      // Not valid JSON, continue to other handlers
+    }
+  }
+
   // Check for a Slack-specific parameter. This will be present in any
   // request forwarded from the Admin Sheet.
   if (e.parameter.user_name) {
@@ -156,7 +171,7 @@ function doPost(e) {
 
     } catch (error) {
       Logger.log(`Error in Central doPost (Worker): ${error.message}`);
-      AHA_SlackNotify3(`❌ *Fatal Error in doPost*: ${error.message} <@U08TUF8LW2H>`);
+      AHA_SlackNotify3(`❌ *Fatal Error in doPost*: ${error.message} <@U0A6B24777X>`);
       return ContentService.createTextOutput('ERROR: ' + error.message).setMimeType(ContentService.MimeType.TEXT);
     } finally {
       if (lock.hasLock()) {
@@ -354,7 +369,7 @@ function AHA_TriggeredStartWorkers() {
     AHA_StartWorkers3(); // This is the original function
   } catch(e) {
     Logger.log(`❌ Error in AHA_TriggeredStartWorkers: ${e.message}`);
-    AHA_SlackNotify3(`❌ *Fatal Error*: The 5-minute trigger failed to start the workers: ${e.message} <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`❌ *Fatal Error*: The 5-minute trigger failed to start the workers: ${e.message} <@U0A6B24777X>`);
   }
 }
 
@@ -385,7 +400,7 @@ function AHA_ProcessMergeBatch3() {
   
   if (!controlSheet) {
     Logger.log(`ERROR: 'System Dashboard' sheet not found. Stopping merge.`);
-    AHA_SlackNotify3(`❌ *Merge Process Error*: 'System Dashboard' sheet not found. <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`❌ *Merge Process Error*: 'System Dashboard' sheet not found. <@U0A6B24777X>`);
     AHA_DeleteTriggerByName3('AHA_ProcessMergeBatch3');
     return;
   }
@@ -408,7 +423,7 @@ function AHA_ProcessMergeBatch3() {
     tempSheet = targetSS.getSheetByName(tempSheetName);
     if (!tempSheet) {
       Logger.log(`ERROR: Temp sheet '${tempSheetName}' not found. Stopping.`);
-      AHA_SlackNotify3(`❌ *Merge Process Error*: Failed to create temporary sheet: ${tempSheetName}. <@U08TUF8LW2H>`);
+      AHA_SlackNotify3(`❌ *Merge Process Error*: Failed to create temporary sheet: ${tempSheetName}. <@U0A6B24777X>`);
       AHA_DeleteTriggerByName3('AHA_ProcessMergeBatch3');
       return;
     }
@@ -419,7 +434,7 @@ function AHA_ProcessMergeBatch3() {
   
   if (!sourceId) {
     Logger.log(`ERROR: Source ID for worker '${worker}' not found in properties. Stopping merge.`);
-    AHA_SlackNotify3(`❌ *Merge Process Error*: Source ID for worker '${worker}' not found in properties. Stopping merge. <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`❌ *Merge Process Error*: Source ID for worker '${worker}' not found in properties. Stopping merge. <@U0A6B24777X>`);
     AHA_DeleteTriggerByName3('AHA_ProcessMergeBatch3');
     return;
   }
@@ -428,7 +443,7 @@ function AHA_ProcessMergeBatch3() {
   
   if (!sourceSheet) {
     Logger.log(`ERROR: Source sheet '${category}' not found in worker '${worker}'. Stopping merge.`);
-    AHA_SlackNotify3(`❌ *Merge Process Error*: Temporary sheet '${tempSheetName}' not found. Stopping. <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`❌ *Merge Process Error*: Temporary sheet '${tempSheetName}' not found. Stopping. <@U0A6B24777X>`);
     AHA_DeleteTriggerByName3('AHA_ProcessMergeBatch3');
     return;
   }
@@ -480,13 +495,13 @@ function AHA_ProcessBADashMergeBatch3() {
 
   if (!centralId) {
     Logger.log("FATAL ERROR: Central Spreadsheet ID not found. Stopping BA Dash merge.");
-    AHA_SlackNotify3(`❌ *BA Dash Merge Error*: Central Spreadsheet ID not found. Stopping BA Dash merge. <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`❌ *BA Dash Merge Error*: Central Spreadsheet ID not found. Stopping BA Dash merge. <@U0A6B24777X>`);
     AHA_DeleteTriggerByName3('AHA_ProcessBADashMergeBatch3');
     return;
   }
   if (!category || !workerIndexStr) {
     Logger.log("BA Dash Merge triggered without properties. Stopping.");
-    AHA_SlackNotify3(`❌ *BA Dash Merge Error*: BA Dash Merge triggered without properties. Stopping. <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`❌ *BA Dash Merge Error*: BA Dash Merge triggered without properties. Stopping. <@U0A6B24777X>`);
     AHA_DeleteTriggerByName3('AHA_ProcessBADashMergeBatch3');
     return;
   }
@@ -497,7 +512,7 @@ function AHA_ProcessBADashMergeBatch3() {
   
   if (!controlSheet) {
     Logger.log(`ERROR: 'System Dashboard' sheet not found. Stopping BA Dash merge.`);
-    AHA_SlackNotify3(`❌ *BA Dash Merge Error*: 'System Dashboard' sheet not found. <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`❌ *BA Dash Merge Error*: 'System Dashboard' sheet not found. <@U0A6B24777X>`);
     AHA_DeleteTriggerByName3('AHA_ProcessBADashMergeBatch3');
     return;
   }
@@ -533,7 +548,7 @@ function AHA_ProcessBADashMergeBatch3() {
     tempSheet = targetSS.getSheetByName(tempSheetName);
     if (!tempSheet) {
       Logger.log(`ERROR: Temp sheet '${tempSheetName}' not found for BA Dash merge. Stopping.`);
-      AHA_SlackNotify3(`❌ *BA Dash Merge Error*: Temp sheet '${tempSheetName}' not found. <@U08TUF8LW2H>`);
+      AHA_SlackNotify3(`❌ *BA Dash Merge Error*: Temp sheet '${tempSheetName}' not found. <@U0A6B24777X>`);
       AHA_DeleteTriggerByName3('AHA_ProcessBADashMergeBatch3');
       return;
     }
@@ -544,7 +559,7 @@ function AHA_ProcessBADashMergeBatch3() {
   
   if (!sourceId) {
     Logger.log(`ERROR: Source ID for worker '${worker}' not found. Stopping BA Dash merge.`);
-    AHA_SlackNotify3(`❌ *BA Dash Merge Error*: Source ID for '${worker}' not found. <@U08TUF8LW2H>`);
+    AHA_SlackNotify3(`❌ *BA Dash Merge Error*: Source ID for '${worker}' not found. <@U0A6B24777X>`);
     AHA_DeleteTriggerByName3('AHA_ProcessBADashMergeBatch3');
     return;
   }
@@ -663,7 +678,7 @@ function AHA_CheckFailedImports3() {
   // --- CONFIGURATION ---
   // This is the ID of your FAILURE LOG SPREADSHEET
   const FAILURE_LOG_DOC_ID = "1sEqcKalRpWOakM82Ffr-BRNN17ft4wUnv31fSIuQZYw"; // This is now a Spreadsheet ID
-  const MENTION_USER_ON_ERROR = "<@U08TUF8LW2H>";
+  const MENTION_USER_ON_ERROR = "<@U0A6B24777X>";
   // ---
   
   try {

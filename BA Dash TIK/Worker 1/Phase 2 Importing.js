@@ -71,7 +71,7 @@ function AHA_SortValidationList2() {
     const data = allData.filter(row => row.some(cell => cell !== "" && cell != null));
     if (data.length === 0) {
       Logger.log("No data to sort.");
-      AHA_SlackNotify3("❌ *Error*: No data to sort. <@U08TUF8LW2H>");
+      AHA_SlackNotify3("❌ *Error*: No data to sort. <@U0A6B24777X>");
       return;
     }
 
@@ -194,7 +194,7 @@ function AHA_ArchiveFilesByCategory2() {
       summaryMessage += `❌ *${failedArchives.length} files failed to archive.*\n`;
       // Join the detailed error messages for the report
       summaryMessage += "```\n" + failedArchives.join("\n") + "\n```"; 
-      summaryMessage += "<@U08TUF8LW2H>"; // Mention user on failure
+      summaryMessage += "<@U0A6B24777X>"; // Mention user on failure
     }
 
     if (summaryMessage) {
