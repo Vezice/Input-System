@@ -758,9 +758,11 @@ function handleValidateAllCommand(responseUrl) {
 
     for (const row of listData) {
       const category = (row[0] || "").toString().trim();
+      const role = (row[1] || "").toString().trim();
       const centralSheetId = row[5]; // Column F
 
-      if (!category || !centralSheetId) continue;
+      // Only check Central sheets, skip Workers
+      if (!category || !centralSheetId || role !== "Central") continue;
 
       // Extract marketplace code
       const marketplaceCode = category.slice(-3).toUpperCase();
