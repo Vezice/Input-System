@@ -449,9 +449,12 @@ function AHA_ProcessMergeBatch3() {
   const dataToCopy = sourceSheet.getDataRange().getDisplayValues();
 
   if (dataToCopy && dataToCopy.length > 0) {
-    if (workerIndex === 0 && tempSheet) { 
+    if (workerIndex === 0 && tempSheet) {
       const headers = [dataToCopy[0]];
       tempSheet.getRange(1, 1, 1, headers[0].length).setValues(headers).setFontWeight("bold").setBackground("yellow");
+
+      // Immediately delete unused columns to prevent cell limit issues
+      AHA_TrimUnusedColumns3(tempSheet, headers[0].length);
     }
     const rowsToCopy = dataToCopy.slice(1);
     if (rowsToCopy.length > 0 && tempSheet) { 
@@ -535,6 +538,9 @@ function AHA_ProcessBADashMergeBatch3() {
           const targetRange = tempSheet.getRange(1, 1, originalData.length, originalData[0].length);
           // Force Plain Text formatting to prevent auto-conversion
           targetRange.setNumberFormat("@").setValues(originalData);
+
+          // Immediately delete unused columns to prevent cell limit issues
+          AHA_TrimUnusedColumns3(tempSheet, originalData[0].length);
 
           Logger.log(`Copied ${originalData.length} existing rows from '${category}'.`);
       }
@@ -844,7 +850,24 @@ function AHA_FreezeImportStatus3() {
   }
 }
 
-
+/**
+ * Deletes all columns after the specified number of columns to keep.
+ * This prevents wasted cells when a sheet has many rows but few used columns.
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet The sheet to trim.
+ * @param {number} columnsToKeep The number of columns to retain (1-indexed count).
+ */
+function AHA_TrimUnusedColumns3(sheet, columnsToKeep) {
+  try {
+    const maxCols = sheet.getMaxColumns();
+    if (maxCols > columnsToKeep) {
+      // Delete from column (columnsToKeep + 1) to the end
+      sheet.deleteColumns(columnsToKeep + 1, maxCols - columnsToKeep);
+      Logger.log(`Trimmed unused columns: kept ${columnsToKeep}, deleted ${maxCols - columnsToKeep} columns.`);
+    }
+  } catch (err) {
+    Logger.log(`Warning: Could not trim columns - ${err.message}`);
+  }
+}
 
 
 

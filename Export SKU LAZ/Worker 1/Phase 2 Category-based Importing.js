@@ -237,6 +237,10 @@ function AHA_ImportCategoryBatchInBatches2() {
                                 targetSheet.getRange(1, 1, 1, finalHeaders.length).setValues([finalHeaders])
                                     .setFontWeight("bold").setBackground("yellow");
                                 targetSheet.getRange(2, 1, 1000, finalHeaders.length).setNumberFormat("@");
+
+                                // Immediately delete unused columns to prevent cell limit issues
+                                AHA_TrimUnusedColumns2(targetSheet, finalHeaders.length);
+
                                 Logger.log(`Set standard header for '${category}'.`);
                             }
                             
@@ -1166,4 +1170,27 @@ function AHA_GetSourceHeaderIndices(fileHeaders) {
     headerMap.get(standardizedHeader).push(index);
   });
   return headerMap;
+}
+
+/**
+ * Deletes all columns after the specified number of columns to keep.
+ * This prevents wasted cells when a sheet has many rows but few used columns.
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet The sheet to trim.
+ * @param {number} columnsToKeep The number of columns to retain (1-indexed count).
+ */
+function AHA_TrimUnusedColumns2(sheet, columnsToKeep) {
+  const start = new Date();
+  try {
+    const maxCols = sheet.getMaxColumns();
+    if (maxCols > columnsToKeep) {
+      // Delete from column (columnsToKeep + 1) to the end
+      sheet.deleteColumns(columnsToKeep + 1, maxCols - columnsToKeep);
+      Logger.log(`Trimmed unused columns: kept ${columnsToKeep}, deleted ${maxCols - columnsToKeep} columns.`);
+    }
+  } catch (err) {
+    Logger.log(`Warning: Could not trim columns - ${err.message}`);
+  } finally {
+    const end = new Date();
+    AHA_LogRuntime3(end - start);
+  }
 }
