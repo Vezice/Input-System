@@ -3,6 +3,57 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /**
+ * Checks the 'Upload Here' folder for duplicate filenames.
+ * If duplicates are found, sends a Slack alert with details and returns false.
+ * This prevents the system from processing duplicate files that would cause
+ * duplicate entries in the final sheets.
+ *
+ * @param {GoogleAppsScript.Drive.Folder} uploadHereFolder The folder to check.
+ * @param {string} category The category name for the Slack message.
+ * @returns {boolean} Returns true if no duplicates found, false if duplicates exist.
+ */
+function AHA_CheckForDuplicateFiles3(uploadHereFolder, category) {
+  const fileIterator = uploadHereFolder.getFiles();
+  const filenameCounts = new Map();
+
+  // Count occurrences of each filename
+  while (fileIterator.hasNext()) {
+    const file = fileIterator.next();
+    const filename = file.getName();
+    filenameCounts.set(filename, (filenameCounts.get(filename) || 0) + 1);
+  }
+
+  // Find duplicates (count > 1)
+  const duplicates = [];
+  for (const [filename, count] of filenameCounts.entries()) {
+    if (count > 1) {
+      duplicates.push({ filename, count });
+    }
+  }
+
+  if (duplicates.length > 0) {
+    // Build alert message
+    let message = `🚨 *DUPLICATE FILES DETECTED* for *${category}*!\n\n`;
+    message += `The following files have duplicates in the 'Upload Here' folder:\n`;
+
+    duplicates.forEach(dup => {
+      message += `• *${dup.filename}* (${dup.count} copies)\n`;
+    });
+
+    message += `\n⛔ *Import process halted.* Please remove the duplicate files and try again.\n`;
+    message += `<@U0A6B24777X>`;
+
+    AHA_SlackNotify3(message);
+    Logger.log(`Duplicate files detected: ${JSON.stringify(duplicates)}`);
+
+    return false; // Duplicates found
+  }
+
+  Logger.log("✅ No duplicate filenames detected. Proceeding with import.");
+  return true; // No duplicates
+}
+
+/**
  * Main function to start the worker process. It now checks if there are files
  * to process before triggering the workers.
  */
@@ -76,6 +127,15 @@ function AHA_SplitFilesToWorkers3(ss, category) {
     throw new Error(`"Upload Here" folder not found in ${category}`);
   }
   const uploadHere = uploadHereFolders.next();
+
+  // --- DUPLICATE CHECK ---
+  // Check for duplicate filenames before distributing to workers.
+  // If duplicates exist, halt the process and alert the admin.
+  if (!AHA_CheckForDuplicateFiles3(uploadHere, category)) {
+    updateSheet.getRange("A1").setValue("SCRIPT OFFLINE");
+    return false; // Halt the import process
+  }
+  // --- END DUPLICATE CHECK ---
 
   const workerFolders = {};
   const numWorkers = 3;
