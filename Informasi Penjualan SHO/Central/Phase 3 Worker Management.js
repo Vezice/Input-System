@@ -41,6 +41,7 @@ function AHA_CheckForDuplicateFiles3(uploadHereFolder, category) {
     });
 
     message += `\n⛔ *Import process halted.* Please remove the duplicate files and try again.\n`;
+    message += `\n💡 *Tip:* Use \`/ibot removeduplicates ${category}\` to automatically remove duplicates.\n`;
     message += `<@U0A6B24777X>`;
 
     AHA_SlackNotify3(message);

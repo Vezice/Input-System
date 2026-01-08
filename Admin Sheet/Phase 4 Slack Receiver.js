@@ -157,6 +157,14 @@ function processAndForwardCommand(e) {
         handlePingAllCommand(payloadParams.response_url);
         break;
 
+      case 'removeduplicates':
+        if (subCommand) {
+          handleRemoveDuplicatesCommand(payloadParams.response_url, subCommand);
+        } else {
+          sendSlackResponse(payloadParams.response_url, "Please specify a category. Example: `/ibot removeduplicates BA Produk SHO`");
+        }
+        break;
+
       default:
         // If no other command matches, assume it's a category to be forwarded.
         const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(linksSheetName);
@@ -542,6 +550,9 @@ function handleHelpCommand(responseUrl) {
 • \`/ibot check failed\` - Check files in Failed folder
 • \`/ibot check other\` - Check files in other folders
 
+*Cleanup Commands:*
+• \`/ibot removeduplicates [category]\` - Remove duplicate files from Upload Here folder
+
 *Info Commands:*
 • \`/ibot status\` - System health check
 • \`/ibot history\` - Recent import activities
@@ -913,5 +924,108 @@ function handlePingAllCommand(responseUrl) {
 
   } catch (e) {
     sendSlackResponse(responseUrl, `❌ Error during ping: ${e.message}`);
+  }
+}
+
+
+/**
+ * Handles the /ibot removeduplicates [category] command
+ * Removes duplicate files from the Upload Here folder, keeping only one copy of each.
+ * @param {string} responseUrl The Slack response URL.
+ * @param {string} categoryInput The category name.
+ */
+function handleRemoveDuplicatesCommand(responseUrl, categoryInput) {
+  const ROOT_DRIVE_FOLDER_ID = '0AJyZWtXd1795Uk9PVA';
+  const MOVE_FOLDER_NAME = 'Move';
+
+  try {
+    sendSlackResponse(responseUrl, `🔍 Scanning for duplicates in *${categoryInput}*...`);
+
+    // Navigate to Move > [Category] > Upload Here
+    const rootFolder = DriveApp.getFolderById(ROOT_DRIVE_FOLDER_ID);
+    const moveFolders = rootFolder.getFoldersByName(MOVE_FOLDER_NAME);
+
+    if (!moveFolders.hasNext()) {
+      sendSlackResponse(responseUrl, `❌ 'Move' folder not found.`);
+      return;
+    }
+
+    const moveFolder = moveFolders.next();
+    const categoryFolders = moveFolder.getFoldersByName(categoryInput);
+
+    if (!categoryFolders.hasNext()) {
+      sendSlackResponse(responseUrl, `❌ Category folder '${categoryInput}' not found in Move folder.`);
+      return;
+    }
+
+    const categoryFolder = categoryFolders.next();
+    const uploadHereFolders = categoryFolder.getFoldersByName('Upload Here');
+
+    if (!uploadHereFolders.hasNext()) {
+      sendSlackResponse(responseUrl, `❌ 'Upload Here' folder not found in '${categoryInput}'.`);
+      return;
+    }
+
+    const uploadHereFolder = uploadHereFolders.next();
+
+    // Scan for duplicates
+    const fileIterator = uploadHereFolder.getFiles();
+    const filesByName = new Map(); // filename -> array of file objects
+
+    while (fileIterator.hasNext()) {
+      const file = fileIterator.next();
+      const filename = file.getName();
+
+      if (!filesByName.has(filename)) {
+        filesByName.set(filename, []);
+      }
+      filesByName.get(filename).push(file);
+    }
+
+    // Find and remove duplicates
+    const duplicatesRemoved = [];
+    let totalRemoved = 0;
+
+    for (const [filename, files] of filesByName.entries()) {
+      if (files.length > 1) {
+        // Keep the first file (oldest by iteration order), delete the rest
+        const filesToDelete = files.slice(1);
+
+        for (const file of filesToDelete) {
+          try {
+            file.setTrashed(true); // Move to trash instead of permanent delete
+            totalRemoved++;
+          } catch (deleteErr) {
+            Logger.log(`Failed to delete duplicate: ${filename} - ${deleteErr.message}`);
+          }
+        }
+
+        duplicatesRemoved.push({
+          filename: filename,
+          kept: 1,
+          removed: filesToDelete.length
+        });
+      }
+    }
+
+    // Build response message
+    if (duplicatesRemoved.length === 0) {
+      sendSlackResponse(responseUrl, `✅ No duplicates found in *${categoryInput}*. The Upload Here folder is clean.`);
+      return;
+    }
+
+    let message = `🗑️ *Duplicates Removed from ${categoryInput}*\n\n`;
+    message += `*Total files removed:* ${totalRemoved}\n\n`;
+
+    for (const dup of duplicatesRemoved) {
+      message += `• *${dup.filename}* - kept 1, removed ${dup.removed}\n`;
+    }
+
+    message += `\n✅ Duplicate cleanup complete. Files moved to trash.`;
+
+    sendSlackResponse(responseUrl, message);
+
+  } catch (e) {
+    sendSlackResponse(responseUrl, `❌ Error removing duplicates: ${e.message}`);
   }
 }
