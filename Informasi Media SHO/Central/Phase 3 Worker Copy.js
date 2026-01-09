@@ -644,6 +644,13 @@ function AHA_FinalizeMerge3(category, tempSheetName) {
     Logger.log(`BigQuery export failed (non-fatal): ${bqError.message}`);
   }
 
+  // Run brand validation and report results to Slack
+  try {
+    AHA_ValidateCategoryBrands3(category);
+  } catch (valError) {
+    Logger.log(`Brand validation failed (non-fatal): ${valError.message}`);
+  }
+
   AHA_CheckFailedImports3();
 }
 
@@ -870,6 +877,294 @@ function AHA_TrimUnusedColumns3(sheet, columnsToKeep) {
 }
 
 
+/**
+ * Validates brands for the just-imported category and sends results to Slack.
+ * Called at the end of the import process before the failed folder check.
+ *
+ * @param {string} category The category that was just imported.
+ */
+function AHA_ValidateCategoryBrands3(category) {
+  const ADMIN_SHEET_ID = "11aYJSWTW7xxZcyfREdcvGoUhgPnl4xU8MQM6lE1se4M";
+
+  try {
+    Logger.log(`Starting post-import validation for ${category}`);
+
+    // Extract marketplace code from category name (last 3 characters)
+    const marketplaceCode = category.slice(-3).toUpperCase();
+    if (!["SHO", "LAZ", "TIK", "TOK", "BSL"].includes(marketplaceCode)) {
+      Logger.log(`Skipping validation for ${category} - no valid marketplace code`);
+      return;
+    }
+
+    // Check if this is a BA Dash category (requires different validation)
+    const isBADash = category.toLowerCase().startsWith("ba dash");
+    if (isBADash) {
+      AHA_ValidateBADashCategory3(category, marketplaceCode, ADMIN_SHEET_ID);
+      return;
+    }
+
+    // Get expected brands from Admin Sheet's Brand Master
+    const adminSS = SpreadsheetApp.openById(ADMIN_SHEET_ID);
+    const brandMasterSheet = adminSS.getSheetByName("Brand Master");
+
+    if (!brandMasterSheet) {
+      Logger.log("Brand Master sheet not found in Admin Sheet");
+      return;
+    }
+
+    // Get brands for this marketplace (Brand Master: Col A = Marketplace, Col B = Brand, data starts row 10)
+    const lastRow = brandMasterSheet.getLastRow();
+    if (lastRow < 10) {
+      Logger.log("No brand data in Brand Master");
+      return;
+    }
+
+    const brandData = brandMasterSheet.getRange(10, 1, lastRow - 9, 2).getValues();
+    const expectedBrands = [];
+
+    for (const row of brandData) {
+      const rowMarketplace = (row[0] || "").toString().trim().toUpperCase();
+      const brandCode = (row[1] || "").toString().trim().toUpperCase();
+
+      if (rowMarketplace === marketplaceCode && brandCode && !brandCode.startsWith("(")) {
+        expectedBrands.push(brandCode);
+      }
+    }
+
+    if (expectedBrands.length === 0) {
+      Logger.log(`No brands found in Brand Master for ${marketplaceCode}`);
+      return;
+    }
+
+    // Get imported brands from the category sheet (Column A)
+    const centralId = PropertiesService.getScriptProperties().getProperty('CENTRAL_SPREADSHEET_ID');
+    const centralSS = SpreadsheetApp.openById(centralId);
+    const categorySheet = centralSS.getSheetByName(category);
+
+    if (!categorySheet) {
+      Logger.log(`Category sheet '${category}' not found`);
+      return;
+    }
+
+    const catLastRow = categorySheet.getLastRow();
+    if (catLastRow < 2) {
+      Logger.log("No data in category sheet");
+      return;
+    }
+
+    const importedData = categorySheet.getRange(2, 1, catLastRow - 1, 1).getValues();
+    const importedBrands = new Set();
+
+    for (const row of importedData) {
+      const brand = (row[0] || "").toString().trim().toUpperCase();
+      if (brand) importedBrands.add(brand);
+    }
+
+    // Find missing brands
+    const missingBrands = expectedBrands.filter(b => !importedBrands.has(b));
+
+    // Build and send Slack message
+    let message = `📊 *Brand Validation - ${category}*\n\n`;
+    message += `Marketplace: *${marketplaceCode}*\n`;
+    message += `Expected Brands: *${expectedBrands.length}*\n`;
+    message += `Found Brands: *${importedBrands.size}*\n`;
+    message += `Missing Brands: *${missingBrands.length}*\n`;
+
+    if (missingBrands.length > 0) {
+      const missingList = missingBrands.length <= 10
+        ? missingBrands.join(", ")
+        : missingBrands.slice(0, 10).join(", ") + ` ... and ${missingBrands.length - 10} more`;
+      message += `\n⚠️ *Missing:* ${missingList}`;
+    } else {
+      message += `\n✅ All brands found!`;
+    }
+
+    AHA_SlackNotify3(message);
+    Logger.log(`Validation complete for ${category}: ${missingBrands.length} missing`);
+
+  } catch (e) {
+    Logger.log(`Error in validation: ${e.message}`);
+    AHA_SlackNotify3(`⚠️ Validation check failed for *${category}*: ${e.message}`);
+  }
+}
+
+
+/**
+ * Validates BA Dash categories with date-based validation (L7D).
+ *
+ * @param {string} category The BA Dash category.
+ * @param {string} marketplaceCode The marketplace code.
+ * @param {string} adminSheetId The Admin Sheet ID.
+ */
+function AHA_ValidateBADashCategory3(category, marketplaceCode, adminSheetId) {
+  const BA_DASH_DATE_COLUMNS = {
+    "BA Dash SHO": 18, // Column R
+    "BA Dash LAZ": 2,  // Column B
+    "BA Dash TIK": 2,  // Column B
+    "BA Dash TOK": 2   // Column B
+  };
+
+  try {
+    // Get expected brands from Admin Sheet
+    const adminSS = SpreadsheetApp.openById(adminSheetId);
+    const brandMasterSheet = adminSS.getSheetByName("Brand Master");
+
+    if (!brandMasterSheet) {
+      Logger.log("Brand Master sheet not found");
+      return;
+    }
+
+    const lastRow = brandMasterSheet.getLastRow();
+    if (lastRow < 10) return;
+
+    const brandData = brandMasterSheet.getRange(10, 1, lastRow - 9, 2).getValues();
+    const expectedBrands = [];
+
+    for (const row of brandData) {
+      const rowMarketplace = (row[0] || "").toString().trim().toUpperCase();
+      const brandCode = (row[1] || "").toString().trim().toUpperCase();
+
+      if (rowMarketplace === marketplaceCode && brandCode && !brandCode.startsWith("(")) {
+        expectedBrands.push(brandCode);
+      }
+    }
+
+    if (expectedBrands.length === 0) {
+      Logger.log(`No brands for ${marketplaceCode}`);
+      return;
+    }
+
+    // Get Central's Import sheet (clean data with dates)
+    const centralId = PropertiesService.getScriptProperties().getProperty('CENTRAL_SPREADSHEET_ID');
+    const centralSS = SpreadsheetApp.openById(centralId);
+    const importSheet = centralSS.getSheetByName("Import");
+
+    if (!importSheet) {
+      Logger.log("Import sheet not found");
+      return;
+    }
+
+    const dateColumn = BA_DASH_DATE_COLUMNS[category];
+    if (!dateColumn) {
+      Logger.log(`No date column mapping for ${category}`);
+      return;
+    }
+
+    // Calculate L7D date range
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const endDate = new Date(today);
+    endDate.setDate(endDate.getDate() - 1); // Yesterday
+    const startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - 6); // 7 days back
+
+    // Get data
+    const importLastRow = importSheet.getLastRow();
+    if (importLastRow < 2) {
+      Logger.log("No data in Import sheet");
+      return;
+    }
+
+    const maxCol = Math.max(1, dateColumn);
+    const data = importSheet.getRange(2, 1, importLastRow - 1, maxCol).getValues();
+
+    // Group brands by date and track duplicates
+    const brandsByDate = {};
+    const brandDateCounts = {};
+
+    for (const row of data) {
+      const brand = (row[0] || "").toString().trim().toUpperCase();
+      const dateValue = row[dateColumn - 1];
+
+      if (!brand || !dateValue) continue;
+
+      let rowDate = dateValue instanceof Date ? new Date(dateValue) : new Date(dateValue);
+      if (isNaN(rowDate.getTime())) continue;
+
+      rowDate.setHours(0, 0, 0, 0);
+
+      if (rowDate >= startDate && rowDate <= endDate) {
+        const dateKey = Utilities.formatDate(rowDate, "Asia/Jakarta", "dd/MM/yyyy");
+        if (!brandsByDate[dateKey]) brandsByDate[dateKey] = new Set();
+        brandsByDate[dateKey].add(brand);
+
+        const brandDateKey = `${dateKey}|${brand}`;
+        brandDateCounts[brandDateKey] = (brandDateCounts[brandDateKey] || 0) + 1;
+      }
+    }
+
+    // Find duplicates
+    const duplicates = [];
+    for (const [key, count] of Object.entries(brandDateCounts)) {
+      if (count > 1) {
+        const [dateKey, brand] = key.split("|");
+        duplicates.push({ date: dateKey, brand: brand, count: count });
+      }
+    }
+
+    // Build date results
+    const dateResults = [];
+    let datesWithMissing = 0;
+    let currentDate = new Date(startDate);
+
+    while (currentDate <= endDate) {
+      const dateKey = Utilities.formatDate(currentDate, "Asia/Jakarta", "dd/MM/yyyy");
+      const brandsOnDate = brandsByDate[dateKey] || new Set();
+      const hasData = brandsOnDate.size > 0;
+      const missingOnDate = hasData ? expectedBrands.filter(b => !brandsOnDate.has(b)) : [];
+
+      if (hasData && missingOnDate.length > 0) datesWithMissing++;
+
+      dateResults.push({
+        date: dateKey,
+        hasData: hasData,
+        missingCount: hasData ? missingOnDate.length : 0,
+        missingBrands: missingOnDate
+      });
+
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    // Build Slack message
+    let message = `📊 *Brand Validation - ${category}* (L7D)\n`;
+    message += `Marketplace: *${marketplaceCode}*\n`;
+    message += `Expected Brands: *${expectedBrands.length}*\n\n`;
+
+    for (const dr of dateResults) {
+      if (!dr.hasData) {
+        message += `📅 ${dr.date} - ⚪ No data\n`;
+      } else if (dr.missingCount === 0) {
+        message += `📅 ${dr.date} - ✅ All brands found\n`;
+      } else {
+        const missingList = dr.missingBrands.slice(0, 5).join(", ");
+        const extra = dr.missingBrands.length > 5 ? ` +${dr.missingBrands.length - 5} more` : "";
+        message += `📅 ${dr.date} - ⚠️ Missing: ${missingList}${extra}\n`;
+      }
+    }
+
+    message += `\n*Summary:* ${datesWithMissing} of ${dateResults.length} days with missing brands`;
+
+    if (duplicates.length > 0) {
+      message += `\n\n🔴 *Duplicates Found:* ${duplicates.length} brand+date combinations`;
+      const dupsToShow = duplicates.slice(0, 5);
+      for (const dup of dupsToShow) {
+        message += `\n• ${dup.date} - ${dup.brand} (${dup.count}x)`;
+      }
+      if (duplicates.length > 5) {
+        message += `\n_...and ${duplicates.length - 5} more duplicates_`;
+      }
+    } else {
+      message += `\n\n✅ *No duplicates found*`;
+    }
+
+    AHA_SlackNotify3(message);
+    Logger.log(`BA Dash validation complete for ${category}`);
+
+  } catch (e) {
+    Logger.log(`Error in BA Dash validation: ${e.message}`);
+    AHA_SlackNotify3(`⚠️ BA Dash validation failed for *${category}*: ${e.message}`);
+  }
+}
 
 
 
