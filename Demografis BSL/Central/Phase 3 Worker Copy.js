@@ -971,10 +971,7 @@ function AHA_ValidateCategoryBrands3(category) {
     message += `Missing Brands: *${missingBrands.length}*\n`;
 
     if (missingBrands.length > 0) {
-      const missingList = missingBrands.length <= 10
-        ? missingBrands.join(", ")
-        : missingBrands.slice(0, 10).join(", ") + ` ... and ${missingBrands.length - 10} more`;
-      message += `\n⚠️ *Missing:* ${missingList}`;
+      message += `\n⚠️ *Missing:* ${missingBrands.join(", ")}`;
     } else {
       message += `\n✅ All brands found!`;
     }
