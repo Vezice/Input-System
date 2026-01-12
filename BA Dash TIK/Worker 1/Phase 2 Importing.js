@@ -150,30 +150,49 @@ function AHA_ArchiveFilesByCategory2() {
         const categoryFolder = AHA_GetSubFolder2(archiveRoot, category);
         const datedFolder = AHA_GetSubFolder2(categoryFolder, dateStamp);
 
-        try {
-          const parentIds = [];
-          const parents = file.getParents();
-          while (parents.hasNext()) {
-            parentIds.push(parents.next().getId());
-          }
+        // --- RETRY LOGIC for transient Drive API errors ---
+        const MAX_RETRIES = 3;
+        const RETRY_DELAY_MS = 5000; // 5 seconds between retries
+        let archived = false;
+        let lastError = null;
 
-          Drive.Files.update(
-            { title: oldName }, // Keep original name
-            fileId,
-            null, {
-              supportsAllDrives: true,
-              addParents: datedFolder.getId(),
-              removeParents: parentIds.join(",")
+        for (let attempt = 1; attempt <= MAX_RETRIES && !archived; attempt++) {
+          try {
+            const parentIds = [];
+            const parents = file.getParents();
+            while (parents.hasNext()) {
+              parentIds.push(parents.next().getId());
             }
-          );
-          
-          // --- MODIFICATION: Instead of sending a notification, add to the success list ---
-          successfulArchives.push(oldName);
-          Logger.log(`✅ Archived: ${oldName}`);
 
-        } catch (err) {
-          // --- MODIFICATION: Instead of sending a notification, add to the failure list ---
-          const errorMessage = `Failed to archive ${oldName}: ${err}`;
+            Drive.Files.update(
+              { title: oldName }, // Keep original name
+              fileId,
+              null, {
+                supportsAllDrives: true,
+                addParents: datedFolder.getId(),
+                removeParents: parentIds.join(",")
+              }
+            );
+
+            // Success - add to the success list
+            successfulArchives.push(oldName);
+            Logger.log(`✅ Archived: ${oldName}${attempt > 1 ? ` (attempt ${attempt})` : ''}`);
+            archived = true;
+
+          } catch (err) {
+            lastError = err;
+            Logger.log(`⚠️ Attempt ${attempt}/${MAX_RETRIES} failed for ${oldName}: ${err.message || err}`);
+
+            // If not the last attempt, wait before retrying
+            if (attempt < MAX_RETRIES) {
+              Utilities.sleep(RETRY_DELAY_MS);
+            }
+          }
+        }
+
+        // If all retries failed, add to failure list
+        if (!archived && lastError) {
+          const errorMessage = `Failed to archive ${oldName}: ${lastError}`;
           failedArchives.push(errorMessage);
           Logger.log(`❌ ${errorMessage}`);
         }
