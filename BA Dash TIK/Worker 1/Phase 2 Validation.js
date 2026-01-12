@@ -409,21 +409,25 @@ function AHA_ValidationBatch2() {
                     } else {
                         // --- THIS IS THE FINAL FAILURE BLOCK ---
                         AHA_SlackNotify3(`${CONFIG.SLACK.MENTION_USER} ❌ Error processing file ${name} after ${maxRetries} attempts: ${error.toString()}`);
-                        processingStatus = "Failed"; 
+                        processingStatus = "Failed";
                         validationResult = "Process Error";
                         parentFolderName = AHA_MoveFile2(file, "Failed", category, null);
 
                         // --- NEW LINE: Log this failure to the Google Doc ---
+                        // Use WORKER_CATEGORY (the Worker's assigned category) instead of detected category for clearer logging
                         const workerName = PropertiesService.getScriptProperties().getProperty("WORKER_COUNT") || "Unknown Worker";
-                        AHA_LogFailureToDoc(name, `Process Error: ${error.message}`, category, workerName);
+                        const workerCategory = PropertiesService.getScriptProperties().getProperty("WORKER_CATEGORY") || category;
+                        AHA_LogFailureToDoc(name, `Process Error: ${error.message}`, workerCategory, workerName);
                     }
                 }
             } // --- End of retry loop ---
 
             // --- ALSO LOG "WRONG DATA" FAILURES ---
             if (validationResult === "Wrong Data") {
+                 // Use WORKER_CATEGORY (the Worker's assigned category) instead of detected category for clearer logging
                  const workerName = PropertiesService.getScriptProperties().getProperty("WORKER_COUNT") || "Unknown Worker";
-                 AHA_LogFailureToDoc(name, validationResult, category, workerName);
+                 const workerCategory = PropertiesService.getScriptProperties().getProperty("WORKER_CATEGORY") || category;
+                 AHA_LogFailureToDoc(name, validationResult, workerCategory, workerName);
             }
 
             const lower = name.toLowerCase();
