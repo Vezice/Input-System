@@ -3,6 +3,46 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /**
+ * ONE-TIME SETUP: Run this function to configure BigQuery properties.
+ * After running, BigQuery export will be enabled automatically.
+ */
+function AHA_SetupBigQueryProperties3() {
+  const props = PropertiesService.getScriptProperties();
+
+  props.setProperties({
+    "BIGQUERY_ENABLED": "true",
+    "BIGQUERY_PROJECT_ID": "FBI-Dev",
+    "BIGQUERY_DATASET_ID": "ibot_data"
+  });
+
+  Logger.log("✅ BigQuery properties configured:");
+  Logger.log("   - BIGQUERY_ENABLED: true");
+  Logger.log("   - BIGQUERY_PROJECT_ID: FBI-Dev");
+  Logger.log("   - BIGQUERY_DATASET_ID: ibot_data");
+  Logger.log("");
+  Logger.log("BigQuery export is now enabled for this Central.");
+}
+
+
+/**
+ * Utility to check current BigQuery configuration.
+ */
+function AHA_CheckBigQueryConfig3() {
+  const props = PropertiesService.getScriptProperties();
+  const enabled = props.getProperty("BIGQUERY_ENABLED") || "not set";
+  const projectId = props.getProperty("BIGQUERY_PROJECT_ID") || "not set";
+  const datasetId = props.getProperty("BIGQUERY_DATASET_ID") || "not set";
+
+  Logger.log("Current BigQuery Configuration:");
+  Logger.log(`   - BIGQUERY_ENABLED: ${enabled}`);
+  Logger.log(`   - BIGQUERY_PROJECT_ID: ${projectId}`);
+  Logger.log(`   - BIGQUERY_DATASET_ID: ${datasetId}`);
+
+  return { enabled, projectId, datasetId };
+}
+
+
+/**
  * Main export function - called after category merge completes.
  * Exports the finalized category sheet data to BigQuery.
  *
