@@ -132,7 +132,27 @@ function AHA_StartWorking3() {
   AHA_DeleteAllTimeBasedTriggers();
   // --- END NEW ---
 
-  AHA_SetWorkerConfiguration3();
+  try {
+    AHA_SetWorkerConfiguration3();
+  } catch (configError) {
+    // Send emergency Slack notification using hardcoded fallback
+    // since config might not be loaded yet
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const inputSheet = ss.getSheetByName("Input");
+    const category = inputSheet ? inputSheet.getRange("C1").getValue() : "Unknown";
+    const workerNum = inputSheet ? inputSheet.getRange("D1").getValue() : "?";
+
+    Logger.log(`❌ CRITICAL: Worker startup failed during configuration: ${configError.message}`);
+
+    // Try to send Slack notification via fallback
+    try {
+      AHA_SlackNotify3(`❌ *CRITICAL STARTUP FAILURE*: Worker ${workerNum} for *${category}* crashed during configuration: ${configError.message} <@U0A6B24777X>`);
+    } catch (slackError) {
+      Logger.log(`Could not send Slack notification: ${slackError.message}`);
+    }
+    throw configError; // Re-throw to stop execution
+  }
+
   const properties = PropertiesService.getScriptProperties();
   const category = properties.getProperty("WORKER_CATEGORY");
   const workerRole = properties.getProperty("WORKER_COUNT");
@@ -142,11 +162,11 @@ function AHA_StartWorking3() {
   }
 
   properties.setProperty('SYSTEM_STATUS', 'VALIDATING');
-  
+
   properties.setProperty("LAST_VALIDATION_HEARTBEAT", new Date().getTime());
-  
+
   AHA_SlackNotify3("✅ Worker activated. Status: VALIDATING.");
-  
+
   // This line (109) will now succeed because the slots are free.
   ScriptApp.newTrigger("AHA_SystemWatchdog")
     .timeBased()
