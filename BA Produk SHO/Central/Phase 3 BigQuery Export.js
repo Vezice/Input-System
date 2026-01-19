@@ -11,13 +11,13 @@ function AHA_SetupBigQueryProperties3() {
 
   props.setProperties({
     "BIGQUERY_ENABLED": "true",
-    "BIGQUERY_PROJECT_ID": "FBI-Dev",
+    "BIGQUERY_PROJECT_ID": "fbi-dev-484410",
     "BIGQUERY_DATASET_ID": "ibot_data"
   });
 
   Logger.log("✅ BigQuery properties configured:");
   Logger.log("   - BIGQUERY_ENABLED: true");
-  Logger.log("   - BIGQUERY_PROJECT_ID: FBI-Dev");
+  Logger.log("   - BIGQUERY_PROJECT_ID: fbi-dev-484410");
   Logger.log("   - BIGQUERY_DATASET_ID: ibot_data");
   Logger.log("");
   Logger.log("BigQuery export is now enabled for this Central.");
