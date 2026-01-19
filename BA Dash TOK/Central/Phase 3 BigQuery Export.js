@@ -126,12 +126,13 @@ function AHA_EnsureBigQueryTable3(projectId, datasetId, tableId, headers) {
   } catch (e) {
     if (e.message.includes("Not found")) {
       Logger.log(`Creating table ${tableId}...`);
+      const uniqueFieldNames = AHA_GetUniqueFieldNames3(headers);
       const schema = {
         fields: [
           { name: "import_timestamp", type: "TIMESTAMP", mode: "NULLABLE" },
           { name: "import_batch_id", type: "STRING", mode: "NULLABLE" },
-          ...headers.map(h => ({
-            name: AHA_HeaderToFieldName3(h),
+          ...uniqueFieldNames.map(fieldName => ({
+            name: fieldName,
             type: "STRING",
             mode: "NULLABLE"
           }))
@@ -174,6 +175,30 @@ function AHA_HeaderToFieldName3(header) {
 
 
 /**
+ * Converts array of headers to unique BigQuery field names.
+ * Handles duplicates by appending _2, _3, etc.
+ */
+function AHA_GetUniqueFieldNames3(headers) {
+  const fieldNames = [];
+  const counts = {};
+
+  for (const header of headers) {
+    let baseName = AHA_HeaderToFieldName3(header);
+
+    if (counts[baseName] === undefined) {
+      counts[baseName] = 1;
+      fieldNames.push(baseName);
+    } else {
+      counts[baseName]++;
+      fieldNames.push(`${baseName}_${counts[baseName]}`);
+    }
+  }
+
+  return fieldNames;
+}
+
+
+/**
  * Streaming insert rows to BigQuery (batched for performance).
  * Batches rows in groups of 500 to respect BigQuery limits.
  */
@@ -182,7 +207,7 @@ function AHA_StreamingInsertToBigQuery3(projectId, datasetId, tableId, headers, 
   const importTimestamp = new Date().toISOString();
   const batchId = `${category}_${Utilities.formatDate(new Date(), "Asia/Jakarta", "yyyyMMdd_HHmmss")}`;
 
-  const fieldNames = headers.map(h => AHA_HeaderToFieldName3(h));
+  const fieldNames = AHA_GetUniqueFieldNames3(headers);
 
   for (let i = 0; i < rows.length; i += batchSize) {
     const batch = rows.slice(i, i + batchSize);
