@@ -229,11 +229,22 @@ function AHA_ImportCategoryBatchInBatches2() {
                             const processFunction = importDispatch[category];
                             const standardHeaders = AHA_GetStandardHeaders(category);
 
+                            // Get file headers FIRST (needed for dynamic header detection)
+                            const fileHeaders = fileContentData[categoryInfoForFile.headerRowIndex - 1] || [];
+
+                            // Detect extra headers for categories with variable columns (e.g., Informasi Media SHO)
+                            const dynamicExtraHeaders = AHA_GetDynamicExtraHeaders(category, fileHeaders);
+                            const extendedHeaders = [...standardHeaders, ...dynamicExtraHeaders];
+
+                            if (dynamicExtraHeaders.length > 0) {
+                                Logger.log(`📋 Dynamic headers detected for ${category}: ${dynamicExtraHeaders.join(", ")}`);
+                            }
+
                             if (targetSheet.getLastRow() === 0) {
-                                if (standardHeaders.length === 0) {
+                                if (extendedHeaders.length === 0) {
                                     throw new Error(`No standard headers found for category '${category}' in Type Validation sheet.`);
                                 }
-                                let finalHeaders = (processFunction !== AHA_ProcessGenericFileNoBrand) ? ["Akun", ...standardHeaders] : standardHeaders;
+                                let finalHeaders = (processFunction !== AHA_ProcessGenericFileNoBrand) ? ["Akun", ...extendedHeaders] : extendedHeaders;
                                 targetSheet.getRange(1, 1, 1, finalHeaders.length).setValues([finalHeaders])
                                     .setFontWeight("bold").setBackground("yellow");
                                 targetSheet.getRange(2, 1, 1000, finalHeaders.length).setNumberFormat("@");
@@ -242,10 +253,25 @@ function AHA_ImportCategoryBatchInBatches2() {
                                 AHA_TrimUnusedColumns2(targetSheet, finalHeaders.length);
 
                                 Logger.log(`Set standard header for '${category}'.`);
+                            } else if (dynamicExtraHeaders.length > 0) {
+                                // Temp sheet already has headers - extend if new dynamic columns found
+                                const existingHeaders = targetSheet.getRange(1, 1, 1, targetSheet.getLastColumn()).getValues()[0];
+                                const existingLower = existingHeaders.map(h => (h || "").toString().toLowerCase().trim());
+
+                                const newColumns = dynamicExtraHeaders.filter(h =>
+                                    !existingLower.includes(h.toLowerCase().trim())
+                                );
+
+                                if (newColumns.length > 0) {
+                                    const startCol = targetSheet.getLastColumn() + 1;
+                                    targetSheet.getRange(1, startCol, 1, newColumns.length).setValues([newColumns])
+                                        .setFontWeight("bold").setBackground("yellow");
+                                    targetSheet.getRange(2, startCol, 1000, newColumns.length).setNumberFormat("@");
+                                    Logger.log(`📋 Extended temp sheet with new columns: ${newColumns.join(", ")}`);
+                                }
                             }
-                            
-                            // Get file headers and create a lookup map
-                            const fileHeaders = fileContentData[categoryInfoForFile.headerRowIndex - 1] || [];
+
+                            // Create header lookup map for processing
                             const sourceHeaderMap = AHA_GetSourceHeaderIndices(fileHeaders);
                             
                             // Get special column rules for this category
@@ -258,14 +284,14 @@ function AHA_ImportCategoryBatchInBatches2() {
                             if (processFunction) {
                                 // Pass the new mapping tools to the processing function
                                 importSuccess = processFunction(
-                                    fileContentData, 
-                                    targetSheet, 
-                                    logSheet, 
-                                    folderName, 
-                                    fileDataRowIndex, 
-                                    standardHeaders, // <-- New param
-                                    specialRules,    // <-- New param
-                                    sourceHeaderMap  // <-- New param
+                                    fileContentData,
+                                    targetSheet,
+                                    logSheet,
+                                    folderName,
+                                    fileDataRowIndex,
+                                    extendedHeaders, // <-- Extended with dynamic headers
+                                    specialRules,    // <-- Special column rules
+                                    sourceHeaderMap  // <-- Source header lookup
                                 );
                             } else {
                                 Logger.log(`⚠️ No specific import function for category: ${category}. Skipping.`);
@@ -1116,6 +1142,83 @@ function AHA_GetStandardHeaders(category) {
 }
 
 
+/**
+ * Detects dynamic extra headers from source file that aren't in Type Validation.
+ * Specifically handles "Informasi Media SHO" category which has variable columns:
+ * - Foto Panduan Ukuran
+ * - Nama Variasi 1, 2, 3... (up to 15)
+ * - Foto Variasi 1, 2, 3... (up to 15)
+ *
+ * @param {string} category The category being imported.
+ * @param {Array<string>} fileHeaders The headers from the source file.
+ * @returns {Array<string>} Array of extra header names to append.
+ */
+function AHA_GetDynamicExtraHeaders(category, fileHeaders) {
+  // Only applies to Informasi Media SHO
+  if (category !== "Informasi Media SHO") return [];
+
+  const extraPatterns = [
+    /^foto panduan ukuran$/i,
+    /^nama variasi \d+$/i,
+    /^foto variasi \d+$/i
+  ];
+
+  const extraHeaders = [];
+
+  for (const header of fileHeaders) {
+    const h = (header || "").toString().trim();
+    if (!h) continue;
+
+    for (const pattern of extraPatterns) {
+      if (pattern.test(h) && !extraHeaders.includes(h)) {
+        extraHeaders.push(h);
+        break;
+      }
+    }
+  }
+
+  // Sort: Foto Panduan first, then Nama Variasi numerically, then Foto Variasi numerically
+  return AHA_SortVariationHeaders(extraHeaders);
+}
+
+
+/**
+ * Sorts variation headers in logical order:
+ * 1. "Foto Panduan Ukuran" first
+ * 2. "Nama Variasi" headers sorted numerically (1, 2, 3... not 1, 10, 11, 2...)
+ * 3. "Foto Variasi" headers sorted numerically
+ *
+ * @param {Array<string>} headers Array of header strings to sort.
+ * @returns {Array<string>} Sorted array.
+ */
+function AHA_SortVariationHeaders(headers) {
+  const fotoPanduan = [];
+  const namaVariasi = [];
+  const fotoVariasi = [];
+
+  for (const h of headers) {
+    const lower = h.toLowerCase();
+    if (lower === "foto panduan ukuran") {
+      fotoPanduan.push(h);
+    } else if (lower.startsWith("nama variasi")) {
+      namaVariasi.push(h);
+    } else if (lower.startsWith("foto variasi")) {
+      fotoVariasi.push(h);
+    }
+  }
+
+  // Sort numerically by extracting the number
+  const sortByNumber = (a, b) => {
+    const numA = parseInt(a.match(/\d+/)?.[0] || "0", 10);
+    const numB = parseInt(b.match(/\d+/)?.[0] || "0", 10);
+    return numA - numB;
+  };
+
+  namaVariasi.sort(sortByNumber);
+  fotoVariasi.sort(sortByNumber);
+
+  return [...fotoPanduan, ...namaVariasi, ...fotoVariasi];
+}
 
 
 /**
