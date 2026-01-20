@@ -85,8 +85,11 @@ function AHA_ExportToBigQuery3(category) {
     const headers = data[0];
     const rows = data.slice(1);
 
-    // Ensure table exists with correct schema
-    AHA_EnsureBigQueryTable3(projectId, datasetId, tableId, headers);
+    // Delete existing table (OVERWRITE mode)
+    AHA_DeleteBigQueryTable3(projectId, datasetId, tableId);
+
+    // Create fresh table with correct schema
+    AHA_CreateBigQueryTable3(projectId, datasetId, tableId, headers);
 
     // Export using streaming insert
     AHA_StreamingInsertToBigQuery3(projectId, datasetId, tableId, headers, rows, category);
@@ -116,44 +119,54 @@ function AHA_CategoryToTableId3(category) {
 
 
 /**
- * Ensures BigQuery table exists, creates if needed.
- * Auto-generates schema from sheet headers.
+ * Deletes a BigQuery table if it exists.
+ * Used for OVERWRITE mode - delete before re-creating.
  */
-function AHA_EnsureBigQueryTable3(projectId, datasetId, tableId, headers) {
+function AHA_DeleteBigQueryTable3(projectId, datasetId, tableId) {
   try {
-    BigQuery.Tables.get(projectId, datasetId, tableId);
-    Logger.log(`Table ${tableId} already exists`);
+    BigQuery.Tables.remove(projectId, datasetId, tableId);
+    Logger.log(`Table ${tableId} deleted for overwrite`);
+    // Small delay to ensure deletion is processed
+    Utilities.sleep(1000);
   } catch (e) {
     if (e.message.includes("Not found")) {
-      Logger.log(`Creating table ${tableId}...`);
-      const uniqueFieldNames = AHA_GetUniqueFieldNames3(headers);
-      const schema = {
-        fields: [
-          { name: "import_timestamp", type: "TIMESTAMP", mode: "NULLABLE" },
-          { name: "import_batch_id", type: "STRING", mode: "NULLABLE" },
-          ...uniqueFieldNames.map(fieldName => ({
-            name: fieldName,
-            type: "STRING",
-            mode: "NULLABLE"
-          }))
-        ]
-      };
-
-      const table = {
-        tableReference: {
-          projectId: projectId,
-          datasetId: datasetId,
-          tableId: tableId
-        },
-        schema: schema
-      };
-
-      BigQuery.Tables.insert(table, projectId, datasetId);
-      Logger.log(`Table ${tableId} created successfully`);
+      Logger.log(`Table ${tableId} does not exist, skipping delete`);
     } else {
       throw e;
     }
   }
+}
+
+
+/**
+ * Creates a BigQuery table with schema from sheet headers.
+ */
+function AHA_CreateBigQueryTable3(projectId, datasetId, tableId, headers) {
+  Logger.log(`Creating table ${tableId}...`);
+  const uniqueFieldNames = AHA_GetUniqueFieldNames3(headers);
+  const schema = {
+    fields: [
+      { name: "import_timestamp", type: "TIMESTAMP", mode: "NULLABLE" },
+      { name: "import_batch_id", type: "STRING", mode: "NULLABLE" },
+      ...uniqueFieldNames.map(fieldName => ({
+        name: fieldName,
+        type: "STRING",
+        mode: "NULLABLE"
+      }))
+    ]
+  };
+
+  const table = {
+    tableReference: {
+      projectId: projectId,
+      datasetId: datasetId,
+      tableId: tableId
+    },
+    schema: schema
+  };
+
+  BigQuery.Tables.insert(table, projectId, datasetId);
+  Logger.log(`Table ${tableId} created successfully`);
 }
 
 
