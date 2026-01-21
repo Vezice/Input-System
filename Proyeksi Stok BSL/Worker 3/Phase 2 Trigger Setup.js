@@ -454,11 +454,16 @@ function AHA_RunArchiving() {
   try {
     // --- MODIFICATION ---
     PropertiesService.getScriptProperties().setProperty('SYSTEM_STATUS', 'CLEANUP');
-    
+
     AHA_SlackNotify3("⚠️ *Archiving Files...*");
     AHA_ArchiveFilesByCategory2();
 
-    AHA_DeleteUnusedTempSheets2(); 
+    // --- NEW: Sweep for orphaned files that weren't properly tracked ---
+    // This catches files that were validated but the script crashed before
+    // recording them in the Input sheet, so they were never imported/archived.
+    AHA_SweepOrphanedFiles();
+
+    AHA_DeleteUnusedTempSheets2();
     AHA_SlackNotify3("✅ *Import Completed* ✅");
 
     ScriptApp.newTrigger('AHA_NotifyCentral3')

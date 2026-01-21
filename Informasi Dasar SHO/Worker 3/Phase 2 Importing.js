@@ -227,6 +227,99 @@ function AHA_ArchiveFilesByCategory2() {
   }
 }
 
+
+/**
+ * --- ORPHAN FILE SWEEPER ---
+ * Scans all brand folders (excluding Archive, Move, Failed) for any remaining files
+ * that weren't processed during the import cycle. These "orphaned" files are moved
+ * to the Failed folder and logged.
+ *
+ * This handles edge cases where:
+ * - A file was validated and moved to a brand folder
+ * - But the script crashed before recording it in the Input sheet
+ * - So the file was never imported or archived
+ *
+ * Should be called after archiving to clean up any stragglers.
+ */
+function AHA_SweepOrphanedFiles() {
+  const start = new Date();
+  try {
+    const ROOT_DRIVE_ID = "0AJyZWtXd1795Uk9PVA";
+    const EXCLUDED_FOLDERS = ["Failed", "Move", "Archive"];
+
+    const root = DriveApp.getFolderById(ROOT_DRIVE_ID);
+    const failedFolder = AHA_GetSubFolder2(root, "Failed");
+
+    const workerName = PropertiesService.getScriptProperties().getProperty("WORKER_COUNT") || "Unknown Worker";
+    const workerCategory = PropertiesService.getScriptProperties().getProperty("WORKER_CATEGORY") || "Unknown";
+
+    const orphanedFiles = [];
+    const folders = root.getFolders();
+
+    while (folders.hasNext()) {
+      const folder = folders.next();
+      const folderName = folder.getName();
+
+      // Skip system folders
+      if (EXCLUDED_FOLDERS.includes(folderName)) {
+        continue;
+      }
+
+      // Check for any remaining files in this brand folder
+      const files = folder.getFiles();
+      while (files.hasNext()) {
+        const file = files.next();
+        const fileName = file.getName();
+
+        // Only process Excel files (the type we import)
+        const lower = fileName.toLowerCase();
+        if (!lower.endsWith(".xlsx") && !lower.endsWith(".xls")) {
+          continue;
+        }
+
+        try {
+          // Move orphaned file to Failed folder
+          file.moveTo(failedFolder);
+          orphanedFiles.push({ folder: folderName, file: fileName });
+
+          // Log to the failure document
+          AHA_LogFailureToDoc(fileName, `Orphaned File (found in ${folderName} after cleanup)`, workerCategory, workerName);
+
+          Logger.log(`🧹 Swept orphaned file: ${fileName} from ${folderName}`);
+        } catch (moveErr) {
+          Logger.log(`❌ Failed to sweep orphaned file ${fileName}: ${moveErr.message}`);
+        }
+      }
+    }
+
+    // Send summary notification if orphans were found
+    if (orphanedFiles.length > 0) {
+      let message = `🧹 *Orphan Sweep Complete*: Found and moved ${orphanedFiles.length} orphaned file(s) to Failed folder.\n`;
+      message += "These files were validated but never imported (likely due to a crash).\n";
+      message += "```\n";
+      orphanedFiles.forEach(o => {
+        message += `• ${o.folder}/${o.file}\n`;
+      });
+      message += "```";
+      message += `\n<@U0A6B24777X>`;
+      AHA_SlackNotify3(message);
+    } else {
+      Logger.log("🧹 Orphan sweep complete: No orphaned files found.");
+    }
+
+    return orphanedFiles.length;
+
+  } catch (err) {
+    Logger.log(`❌ Error during orphan sweep: ${err.message}`);
+    AHA_SlackNotify3(`❌ *Orphan Sweep Error*: ${err.message} <@U0A6B24777X>`);
+    return 0;
+  } finally {
+    const end = new Date();
+    AHA_LogRuntime3(end - start);
+  }
+}
+
+
 /**
  * Helper function that reads the "Input" sheet to create a mapping
  * of folder names (brands/accounts) to their corresponding category.
