@@ -229,15 +229,18 @@ function AHA_ArchiveFilesByCategory2() {
 
 
 /**
- * --- ORPHAN FILE SWEEPER ---
- * Scans all brand folders (excluding Archive, Move, Failed) for any remaining files
- * that weren't processed during the import cycle. These "orphaned" files are moved
- * to the Failed folder and logged.
+ * --- ORPHAN FILE SWEEPER (SAFE FOR SHARED FOLDERS) ---
+ * Scans brand folders for files that were tracked in THIS worker's Input sheet
+ * but weren't archived (orphaned due to import/archive failure).
+ *
+ * IMPORTANT: Only sweeps files that are EXPLICITLY listed in the Input sheet.
+ * This prevents accidentally sweeping files belonging to other workers that
+ * share the same brand folders (e.g., BA Dash TOK and BA Produk LAZ both use "BR").
  *
  * This handles edge cases where:
- * - A file was validated and moved to a brand folder
- * - But the script crashed before recording it in the Input sheet
- * - So the file was never imported or archived
+ * - A file was validated and recorded in Input sheet
+ * - But the import or archive step failed/crashed
+ * - So the file remains in the brand folder
  *
  * Should be called after archiving to clean up any stragglers.
  */
@@ -253,9 +256,39 @@ function AHA_SweepOrphanedFiles() {
     const workerName = PropertiesService.getScriptProperties().getProperty("WORKER_COUNT") || "Unknown Worker";
     const workerCategory = PropertiesService.getScriptProperties().getProperty("WORKER_CATEGORY") || "Unknown";
 
-    const orphanedFiles = [];
-    const folders = root.getFolders();
+    // --- SAFE SWEEP: Build a set of files that THIS worker validated ---
+    // Only sweep files that are explicitly tracked in our Input sheet
+    const inputSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Input");
+    const lastRow = inputSheet.getLastRow();
 
+    if (lastRow < 5) {
+      Logger.log("🧹 Orphan sweep: No files in Input sheet, nothing to sweep.");
+      return 0;
+    }
+
+    // Get folder names (column B) and file names (column C) from Input sheet
+    const folderNames = inputSheet.getRange("B5:B" + lastRow).getValues().flat().filter(name => name);
+    const fileNames = inputSheet.getRange("C5:C" + lastRow).getValues().flat().filter(name => name);
+
+    // Create a set of "folder/file" combinations that THIS worker tracked
+    const trackedFiles = new Set();
+    for (let i = 0; i < Math.min(folderNames.length, fileNames.length); i++) {
+      if (folderNames[i] && fileNames[i]) {
+        trackedFiles.add(`${folderNames[i]}/${fileNames[i]}`);
+      }
+    }
+
+    if (trackedFiles.size === 0) {
+      Logger.log("🧹 Orphan sweep: No tracked files found, nothing to sweep.");
+      return 0;
+    }
+
+    Logger.log(`🧹 Orphan sweep: Checking for ${trackedFiles.size} tracked files...`);
+
+    const orphanedFiles = [];
+    const foldersChecked = new Set(folderNames);  // Only check folders we used
+
+    const folders = root.getFolders();
     while (folders.hasNext()) {
       const folder = folders.next();
       const folderName = folder.getName();
@@ -265,15 +298,27 @@ function AHA_SweepOrphanedFiles() {
         continue;
       }
 
-      // Check for any remaining files in this brand folder
+      // Only check folders that THIS worker used (from Input sheet)
+      if (!foldersChecked.has(folderName)) {
+        continue;
+      }
+
+      // Check for files that should have been archived but weren't
       const files = folder.getFiles();
       while (files.hasNext()) {
         const file = files.next();
         const fileName = file.getName();
 
-        // Only process Excel files (the type we import)
+        // Only process Excel files
         const lower = fileName.toLowerCase();
         if (!lower.endsWith(".xlsx") && !lower.endsWith(".xls")) {
+          continue;
+        }
+
+        // CRITICAL: Only sweep if this file was tracked by THIS worker
+        const fileKey = `${folderName}/${fileName}`;
+        if (!trackedFiles.has(fileKey)) {
+          // This file belongs to another worker - DO NOT TOUCH
           continue;
         }
 
@@ -283,7 +328,7 @@ function AHA_SweepOrphanedFiles() {
           orphanedFiles.push({ folder: folderName, file: fileName });
 
           // Log to the failure document
-          AHA_LogFailureToDoc(fileName, `Orphaned File (found in ${folderName} after cleanup)`, workerCategory, workerName);
+          AHA_LogFailureToDoc(fileName, `Orphaned File (found in ${folderName} after cleanup - import/archive failed)`, workerCategory, workerName);
 
           Logger.log(`🧹 Swept orphaned file: ${fileName} from ${folderName}`);
         } catch (moveErr) {
@@ -295,7 +340,7 @@ function AHA_SweepOrphanedFiles() {
     // Send summary notification if orphans were found
     if (orphanedFiles.length > 0) {
       let message = `🧹 *Orphan Sweep Complete*: Found and moved ${orphanedFiles.length} orphaned file(s) to Failed folder.\n`;
-      message += "These files were validated but never imported (likely due to a crash).\n";
+      message += "These files were validated but import/archive failed.\n";
       message += "```\n";
       orphanedFiles.forEach(o => {
         message += `• ${o.folder}/${o.file}\n`;
@@ -304,7 +349,7 @@ function AHA_SweepOrphanedFiles() {
       message += `\n<@U0A6B24777X>`;
       AHA_SlackNotify3(message);
     } else {
-      Logger.log("🧹 Orphan sweep complete: No orphaned files found.");
+      Logger.log("🧹 Orphan sweep complete: All tracked files were properly archived.");
     }
 
     return orphanedFiles.length;
