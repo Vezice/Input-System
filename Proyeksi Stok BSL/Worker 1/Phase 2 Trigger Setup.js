@@ -163,7 +163,20 @@ function AHA_SystemWatchdog() {
   const properties = PropertiesService.getScriptProperties();
   const status = properties.getProperty('SYSTEM_STATUS');
   const STALENESS_LIMIT_MS = 10 * 60 * 1000; // 10 minutes
-  const MAX_RESTARTS = 3; 
+  const MAX_RESTARTS = 3;
+
+  // --- TRIGGER OVERFLOW CHECK ---
+  // Apps Script has a limit of 20 triggers per user per script.
+  // If we're approaching this limit, clean up and recreate only essential triggers.
+  const TRIGGER_WARNING_THRESHOLD = 15;
+  const allTriggers = ScriptApp.getProjectTriggers();
+  const triggerCount = allTriggers.length;
+
+  if (triggerCount >= TRIGGER_WARNING_THRESHOLD) {
+    AHA_SlackNotify3(`⚠️ *Watchdog Alert*: Trigger overflow detected (${triggerCount} triggers). Cleaning up... <@U0A6B24777X>`);
+    AHA_CleanupAndRecreateEssentialTriggers(status);
+    return; // Exit after cleanup - the recreated watchdog will continue monitoring
+  } 
 
   if (!status) {
     // System is OFFLINE - but check if there are pending files that need processing
@@ -497,6 +510,91 @@ function AHA_DeleteAllTimeBasedTriggers() {
     Logger.log(`Error in AHA_DeleteAllTimeBasedTriggers: ${e.message}`);
     // We send a low-priority alert but don't stop the script.
     AHA_SlackNotify3(`⚠️ A minor error occurred while cleaning old triggers: ${e.message}`);
+  }
+}
+
+
+/**
+ * --- TRIGGER OVERFLOW CLEANUP ---
+ * Called by the Watchdog when trigger count exceeds threshold.
+ * Deletes ALL time-based triggers and recreates only the essential ones
+ * based on the current SYSTEM_STATUS.
+ *
+ * @param {string} currentStatus The current SYSTEM_STATUS value.
+ */
+function AHA_CleanupAndRecreateEssentialTriggers(currentStatus) {
+  try {
+    // Step 1: Delete ALL time-based triggers (clean slate)
+    AHA_DeleteAllTimeBasedTriggers();
+    Logger.log("Trigger cleanup: All time-based triggers deleted.");
+
+    // Step 2: Recreate only the essential triggers based on current status
+    // Always recreate the watchdog first
+    ScriptApp.newTrigger("AHA_SystemWatchdog")
+      .timeBased()
+      .everyMinutes(15)
+      .create();
+    Logger.log("Trigger cleanup: Watchdog trigger recreated.");
+
+    // Step 3: Recreate the phase-specific trigger
+    if (!currentStatus) {
+      // System is OFFLINE - no phase trigger needed
+      Logger.log("Trigger cleanup: System is OFFLINE, no phase trigger needed.");
+      AHA_SlackNotify3("✅ *Trigger Cleanup Complete*: System was OFFLINE. Only watchdog recreated.");
+      return;
+    }
+
+    switch (currentStatus) {
+      case "VALIDATING":
+        // Recreate validation batch trigger
+        ScriptApp.newTrigger("AHA_RunValBatchSafely2")
+          .timeBased()
+          .everyMinutes(5)
+          .create();
+        Logger.log("Trigger cleanup: Validation trigger recreated.");
+        AHA_SlackNotify3("✅ *Trigger Cleanup Complete*: Recreated watchdog + validation trigger. Resuming VALIDATING phase.");
+        break;
+
+      case "IMPORTING":
+        // Recreate import batch trigger
+        ScriptApp.newTrigger("AHA_RunImportBatchSafely2")
+          .timeBased()
+          .everyMinutes(5)
+          .create();
+        Logger.log("Trigger cleanup: Import trigger recreated.");
+        AHA_SlackNotify3("✅ *Trigger Cleanup Complete*: Recreated watchdog + import trigger. Resuming IMPORTING phase.");
+        break;
+
+      case "FINALIZING":
+        // Recreate finalization trigger (one-time)
+        ScriptApp.newTrigger("AHA_RunFinalization")
+          .timeBased()
+          .after(10 * 1000)
+          .create();
+        Logger.log("Trigger cleanup: Finalization trigger recreated.");
+        AHA_SlackNotify3("✅ *Trigger Cleanup Complete*: Recreated watchdog + finalization trigger. Resuming FINALIZING phase.");
+        break;
+
+      case "ARCHIVING":
+      case "CLEANUP":
+        // Recreate archiving trigger (one-time)
+        ScriptApp.newTrigger("AHA_RunArchiving")
+          .timeBased()
+          .after(10 * 1000)
+          .create();
+        Logger.log("Trigger cleanup: Archiving trigger recreated.");
+        AHA_SlackNotify3(`✅ *Trigger Cleanup Complete*: Recreated watchdog + archiving trigger. Resuming ${currentStatus} phase.`);
+        break;
+
+      default:
+        // Unknown status - just keep watchdog running
+        Logger.log(`Trigger cleanup: Unknown status '${currentStatus}'. Only watchdog recreated.`);
+        AHA_SlackNotify3(`⚠️ *Trigger Cleanup*: Unknown status '${currentStatus}'. Only watchdog recreated. Manual intervention may be needed.`);
+    }
+
+  } catch (e) {
+    Logger.log(`CRITICAL ERROR in AHA_CleanupAndRecreateEssentialTriggers: ${e.message}`);
+    AHA_SlackNotify3(`❌ *CRITICAL*: Trigger cleanup failed: ${e.message} <@U0A6B24777X>`);
   }
 }
 
