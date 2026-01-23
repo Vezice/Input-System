@@ -343,8 +343,8 @@ function triggerCategoryImport(category) {
     }
 
     // Create a minimal payload that mimics Slack
-    // Note: response_url is omitted since Slack is disabled
-    const payload = `text=${encodeURIComponent(category)}&user_name=ControlPanel`;
+    const user = Session.getActiveUser().getEmail() || "ControlPanel";
+    const payload = `text=${encodeURIComponent(category)}&user_name=${encodeURIComponent(user)}`;
 
     const options = {
       'method': 'post',
@@ -937,8 +937,8 @@ function handleHistoryCommandDirect() {
 // ============================================================
 
 /**
- * Logs a message to the Command Log sheet
- * Google Sheets cells can hold up to 50,000 characters
+ * Logs a message to the Command Log sheet with user tracking.
+ * Google Sheets cells can hold up to 50,000 characters.
  */
 function logToCommandSheet(message) {
   try {
@@ -947,12 +947,20 @@ function logToCommandSheet(message) {
 
     if (!logSheet) {
       logSheet = ss.insertSheet("Command Log");
-      logSheet.getRange("A1:C1").setValues([["Timestamp", "Type", "Message"]]).setFontWeight("bold");
+      logSheet.getRange("A1:D1").setValues([["Timestamp", "User", "Type", "Message"]]).setFontWeight("bold");
     }
 
+    // Ensure header has User column (upgrade existing sheets)
+    const header = logSheet.getRange("A1:D1").getValues()[0];
+    if (header[1] !== "User") {
+      logSheet.insertColumnAfter(1);
+      logSheet.getRange("B1").setValue("User").setFontWeight("bold");
+    }
+
+    const user = Session.getActiveUser().getEmail() || "Unknown";
+
     logSheet.insertRowAfter(1);
-    // Allow up to 32000 characters (leaving some buffer from 50k limit)
-    logSheet.getRange(2, 1, 1, 3).setValues([[new Date(), "CMD", message.substring(0, 32000)]]);
+    logSheet.getRange(2, 1, 1, 4).setValues([[new Date(), user, "CMD", message.substring(0, 32000)]]);
 
     // Keep only last 100 entries
     const lastRow = logSheet.getLastRow();
@@ -960,7 +968,7 @@ function logToCommandSheet(message) {
       logSheet.deleteRows(103, lastRow - 102);
     }
 
-    Logger.log(message);
+    Logger.log(`[${user}] ${message}`);
 
   } catch (e) {
     Logger.log("Could not write to Command Log: " + e.message);
