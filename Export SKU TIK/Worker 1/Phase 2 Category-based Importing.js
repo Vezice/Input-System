@@ -1178,23 +1178,33 @@ function AHA_GetStandardHeaders(category) {
 
 /**
  * Detects dynamic extra headers from source file that aren't in Type Validation.
- * Specifically handles "Informasi Media SHO" category which has variable columns:
- * - Foto Panduan Ukuran
- * - Nama Variasi 1, 2, 3... (up to 15)
- * - Foto Variasi 1, 2, 3... (up to 15)
+ * Handles categories with variable columns:
+ * - Informasi Media SHO: Foto Panduan Ukuran, Nama Variasi X, Foto Variasi X
+ * - BA Produk SHO/LAZ/TIK: Option X Name, Option X Image (English)
+ *                           Nama Variasi X, Foto Variasi X (Indonesian)
+ *
+ * Limited to 15 pairs maximum.
  *
  * @param {string} category The category being imported.
  * @param {Array<string>} fileHeaders The headers from the source file.
- * @returns {Array<string>} Array of extra header names to append.
+ * @returns {Array<string>} Array of extra header names to append, interleaved (Name1, Image1, Name2, Image2...).
  */
 function AHA_GetDynamicExtraHeaders(category, fileHeaders) {
-  // Only applies to Informasi Media SHO
-  if (category !== "Informasi Media SHO") return [];
+  const CATEGORIES_WITH_DYNAMIC_HEADERS = [
+    "Informasi Media SHO",
+    "BA Produk SHO",
+    "BA Produk LAZ",
+    "BA Produk TIK"
+  ];
+
+  if (!CATEGORIES_WITH_DYNAMIC_HEADERS.includes(category)) return [];
 
   const extraPatterns = [
     /^foto panduan ukuran$/i,
     /^nama variasi \d+$/i,
-    /^foto variasi \d+$/i
+    /^foto variasi \d+$/i,
+    /^option \d+ name$/i,
+    /^option \d+ image$/i
   ];
 
   const extraHeaders = [];
@@ -1211,47 +1221,53 @@ function AHA_GetDynamicExtraHeaders(category, fileHeaders) {
     }
   }
 
-  // Sort: Foto Panduan first, then Nama Variasi numerically, then Foto Variasi numerically
   return AHA_SortVariationHeaders(extraHeaders);
 }
 
 
 /**
- * Sorts variation headers in logical order:
- * 1. "Foto Panduan Ukuran" first
- * 2. "Nama Variasi" headers sorted numerically (1, 2, 3... not 1, 10, 11, 2...)
- * 3. "Foto Variasi" headers sorted numerically
+ * Sorts variation headers in interleaved pair order and limits to 15 pairs:
+ * 1. "Foto Panduan Ukuran" first (standalone, not a pair)
+ * 2. Pairs interleaved by number: Name 1, Image 1, Name 2, Image 2...
+ *
+ * Supports both Indonesian and English header formats:
+ * - Indonesian: "Nama Variasi X" (name), "Foto Variasi X" (image)
+ * - English: "Option X Name" (name), "Option X Image" (image)
  *
  * @param {Array<string>} headers Array of header strings to sort.
- * @returns {Array<string>} Sorted array.
+ * @returns {Array<string>} Sorted and interleaved array, max 15 pairs.
  */
 function AHA_SortVariationHeaders(headers) {
+  const MAX_PAIRS = 15;
   const fotoPanduan = [];
-  const namaVariasi = [];
-  const fotoVariasi = [];
+  const namePairs = {}; // { pairNumber: headerString }
+  const imagePairs = {}; // { pairNumber: headerString }
 
   for (const h of headers) {
-    const lower = h.toLowerCase();
+    const lower = h.toLowerCase().trim();
     if (lower === "foto panduan ukuran") {
       fotoPanduan.push(h);
-    } else if (lower.startsWith("nama variasi")) {
-      namaVariasi.push(h);
-    } else if (lower.startsWith("foto variasi")) {
-      fotoVariasi.push(h);
+      continue;
+    }
+
+    const num = parseInt((h.match(/\d+/) || ["0"])[0], 10);
+    if (num < 1 || num > MAX_PAIRS) continue;
+
+    if (/^nama variasi \d+$/i.test(h) || /^option \d+ name$/i.test(h)) {
+      namePairs[num] = h;
+    } else if (/^foto variasi \d+$/i.test(h) || /^option \d+ image$/i.test(h)) {
+      imagePairs[num] = h;
     }
   }
 
-  // Sort numerically by extracting the number
-  const sortByNumber = (a, b) => {
-    const numA = parseInt(a.match(/\d+/)?.[0] || "0", 10);
-    const numB = parseInt(b.match(/\d+/)?.[0] || "0", 10);
-    return numA - numB;
-  };
+  // Build interleaved result: Name 1, Image 1, Name 2, Image 2...
+  const result = [...fotoPanduan];
+  for (let i = 1; i <= MAX_PAIRS; i++) {
+    if (namePairs[i]) result.push(namePairs[i]);
+    if (imagePairs[i]) result.push(imagePairs[i]);
+  }
 
-  namaVariasi.sort(sortByNumber);
-  fotoVariasi.sort(sortByNumber);
-
-  return [...fotoPanduan, ...namaVariasi, ...fotoVariasi];
+  return result;
 }
 
 
