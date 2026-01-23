@@ -281,6 +281,51 @@ function AHA_ImportCategoryBatchInBatches2() {
                             const specialRules = specialRulesCache[category];
                             // --- NEW MAPPING LOGIC END ---
 
+                            // --- HEADER MISMATCH DETECTION ---
+                            // Detect missing and extra headers for better visibility into data quality issues
+                            const missingHeaders = extendedHeaders.filter(header => {
+                                const key = header.toLowerCase().trim();
+                                // Not in source file AND not handled by a special rule
+                                return !sourceHeaderMap.has(key) && !specialRules[header];
+                            });
+
+                            // Build set of patterns used by special rules (for SUM_STARTS_WITH, COALESCE_STARTS_WITH)
+                            const specialPatterns = [];
+                            for (const [, rule] of Object.entries(specialRules)) {
+                                if (rule.action === "SUM_STARTS_WITH" || rule.action === "COALESCE_STARTS_WITH") {
+                                    const pattern = (rule.replacements[0] || "").toLowerCase().trim();
+                                    if (pattern) specialPatterns.push(pattern);
+                                }
+                            }
+
+                            const standardHeadersLower = new Set(extendedHeaders.map(h => h.toLowerCase().trim()));
+                            const extraHeaders = [];
+                            sourceHeaderMap.forEach((indices, key) => {
+                                if (!key) return; // Skip empty headers
+                                if (standardHeadersLower.has(key)) return; // Already expected
+                                // Check if this header is matched by a special rule pattern
+                                const matchedByPattern = specialPatterns.some(pattern => key.startsWith(pattern));
+                                if (!matchedByPattern) {
+                                    extraHeaders.push(key);
+                                }
+                            });
+
+                            if (missingHeaders.length > 0 || extraHeaders.length > 0) {
+                                let alertMsg = `⚠️ *Header Mismatch Detected*\n`;
+                                alertMsg += `*Brand:* ${folderName} | *File:* ${fileName}\n`;
+                                alertMsg += `*Category:* ${category}\n`;
+                                if (missingHeaders.length > 0) {
+                                    alertMsg += `*Missing Headers (${missingHeaders.length}):* ${missingHeaders.join(", ")}\n`;
+                                }
+                                if (extraHeaders.length > 0) {
+                                    alertMsg += `*Extra Headers (${extraHeaders.length}):* ${extraHeaders.join(", ")}\n`;
+                                }
+                                alertMsg += `_Import will continue, but data may be incomplete._`;
+                                AHA_SlackNotify3(alertMsg);
+                                Logger.log(`⚠️ Header mismatch for ${folderName}/${fileName}: Missing=[${missingHeaders.join(",")}] Extra=[${extraHeaders.join(",")}]`);
+                            }
+                            // --- END HEADER MISMATCH DETECTION ---
+
                             if (processFunction) {
                                 // Pass the new mapping tools to the processing function
                                 importSuccess = processFunction(
