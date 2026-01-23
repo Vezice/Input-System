@@ -311,18 +311,7 @@ function AHA_ImportCategoryBatchInBatches2() {
                             });
 
                             if (missingHeaders.length > 0 || extraHeaders.length > 0) {
-                                let alertMsg = `⚠️ *Header Mismatch Detected*\n`;
-                                alertMsg += `*Brand:* ${folderName} | *File:* ${fileName}\n`;
-                                alertMsg += `*Category:* ${category}\n`;
-                                if (missingHeaders.length > 0) {
-                                    alertMsg += `*Missing Headers (${missingHeaders.length}):* ${missingHeaders.join(", ")}\n`;
-                                }
-                                if (extraHeaders.length > 0) {
-                                    alertMsg += `*Extra Headers (${extraHeaders.length}):* ${extraHeaders.join(", ")}\n`;
-                                }
-                                alertMsg += `_Import will continue, but data may be incomplete._`;
-                                AHA_SlackNotify3(alertMsg);
-                                Logger.log(`⚠️ Header mismatch for ${folderName}/${fileName}: Missing=[${missingHeaders.join(",")}] Extra=[${extraHeaders.join(",")}]`);
+                                Logger.log(`⚠️ Header mismatch for ${folderName}/${fileName} [${category}]: Missing=[${missingHeaders.join(",")}] Extra=[${extraHeaders.join(",")}]`);
                             }
                             // --- END HEADER MISMATCH DETECTION ---
 

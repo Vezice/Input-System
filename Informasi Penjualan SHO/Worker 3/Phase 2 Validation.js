@@ -623,7 +623,7 @@ function AHA_MoveFile2(file, targetFolderIdentifier, category = null, sheetData 
             } else {
                 const startRowIndex = dataRowNumber - 1;
                 const NUM_ROWS_TO_CHECK = 30;
-                const MATCH_THRESHOLD_PERCENT = 0.50;
+                const MATCH_THRESHOLD_PERCENT = 0.10;
                 const endRowIndex = Math.min(startRowIndex + NUM_ROWS_TO_CHECK, sheetData.length);
                 const valuesToCheck = sheetData
                     .slice(startRowIndex, endRowIndex)
