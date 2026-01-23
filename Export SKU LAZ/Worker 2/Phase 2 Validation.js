@@ -622,7 +622,7 @@ function AHA_MoveFile2(file, targetFolderIdentifier, category = null, sheetData 
                 AHA_SlackNotify3(`⚠️ Invalid Data Row Index for category '${category}'. Moving to 'Failed'.`);
             } else {
                 const startRowIndex = dataRowNumber - 1;
-                const NUM_ROWS_TO_CHECK = 20;
+                const NUM_ROWS_TO_CHECK = 30;
                 const MATCH_THRESHOLD_PERCENT = 0.50;
                 const endRowIndex = Math.min(startRowIndex + NUM_ROWS_TO_CHECK, sheetData.length);
                 const valuesToCheck = sheetData
