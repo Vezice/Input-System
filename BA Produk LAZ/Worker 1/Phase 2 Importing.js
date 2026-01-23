@@ -114,11 +114,16 @@ function AHA_ArchiveFilesByCategory2() {
     const inputSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Input");
     const lastRow = inputSheet.getLastRow();
     
-    const folderNames = inputSheet.getRange("B5:B" + lastRow).getValues().flat().filter(name => name);
-    const fileNames = inputSheet.getRange("C5:C" + lastRow).getValues().flat().filter(name => name);
-
-    const foldersToArchive = new Set(folderNames);
-    const filesToArchive = new Set(fileNames);
+    // Read folder, file, and status together row-by-row to maintain alignment
+    const rows = inputSheet.getRange("B5:D" + lastRow).getValues();
+    const foldersToArchive = new Set();
+    const filesToArchive = new Set();
+    rows.forEach(([folder, file, status]) => {
+      if (folder && file && status === "Added") {
+        foldersToArchive.add(folder);
+        filesToArchive.add(file);
+      }
+    });
 
     const categoryMap = AHA_GetCategoryFromSheet2();
     const folders = root.getFolders();
@@ -190,11 +195,21 @@ function AHA_ArchiveFilesByCategory2() {
           }
         }
 
-        // If all retries failed, add to failure list
+        // If all retries failed, move to Failed folder so it doesn't remain stranded
         if (!archived && lastError) {
           const errorMessage = `Failed to archive ${oldName}: ${lastError}`;
           failedArchives.push(errorMessage);
           Logger.log(`❌ ${errorMessage}`);
+
+          try {
+            const failedFolder = AHA_GetSubFolder2(root, "Failed");
+            file.moveTo(failedFolder);
+            const workerName = PropertiesService.getScriptProperties().getProperty("WORKER_COUNT") || "Unknown";
+            const workerCategory = PropertiesService.getScriptProperties().getProperty("WORKER_CATEGORY") || "Unknown";
+            AHA_LogFailureToDoc(oldName, `Archive Failed after ${MAX_RETRIES} retries: ${lastError.message || lastError}`, workerCategory, workerName);
+          } catch (moveErr) {
+            Logger.log(`❌ Also failed to move ${oldName} to Failed: ${moveErr.message}`);
+          }
         }
       }
     }
@@ -266,17 +281,17 @@ function AHA_SweepOrphanedFiles() {
       return 0;
     }
 
-    // Get folder names (column B) and file names (column C) from Input sheet
-    const folderNames = inputSheet.getRange("B5:B" + lastRow).getValues().flat().filter(name => name);
-    const fileNames = inputSheet.getRange("C5:C" + lastRow).getValues().flat().filter(name => name);
-
-    // Create a set of "folder/file" combinations that THIS worker tracked
+    // Read folder, file, and status together row-by-row to maintain alignment
+    // Only track files with status "Added" (should have been archived but weren't)
+    const rows = inputSheet.getRange("B5:D" + lastRow).getValues();
     const trackedFiles = new Set();
-    for (let i = 0; i < Math.min(folderNames.length, fileNames.length); i++) {
-      if (folderNames[i] && fileNames[i]) {
-        trackedFiles.add(`${folderNames[i]}/${fileNames[i]}`);
+    const foldersCheckedSet = new Set();
+    rows.forEach(([folder, file, status]) => {
+      if (folder && file && status === "Added") {
+        trackedFiles.add(`${folder}/${file}`);
+        foldersCheckedSet.add(folder);
       }
-    }
+    });
 
     if (trackedFiles.size === 0) {
       Logger.log("🧹 Orphan sweep: No tracked files found, nothing to sweep.");
@@ -286,7 +301,6 @@ function AHA_SweepOrphanedFiles() {
     Logger.log(`🧹 Orphan sweep: Checking for ${trackedFiles.size} tracked files...`);
 
     const orphanedFiles = [];
-    const foldersChecked = new Set(folderNames);  // Only check folders we used
 
     const folders = root.getFolders();
     while (folders.hasNext()) {
@@ -299,7 +313,7 @@ function AHA_SweepOrphanedFiles() {
       }
 
       // Only check folders that THIS worker used (from Input sheet)
-      if (!foldersChecked.has(folderName)) {
+      if (!foldersCheckedSet.has(folderName)) {
         continue;
       }
 
@@ -308,12 +322,6 @@ function AHA_SweepOrphanedFiles() {
       while (files.hasNext()) {
         const file = files.next();
         const fileName = file.getName();
-
-        // Only process Excel files
-        const lower = fileName.toLowerCase();
-        if (!lower.endsWith(".xlsx") && !lower.endsWith(".xls")) {
-          continue;
-        }
 
         // CRITICAL: Only sweep if this file was tracked by THIS worker
         const fileKey = `${folderName}/${fileName}`;

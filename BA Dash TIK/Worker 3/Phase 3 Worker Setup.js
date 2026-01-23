@@ -162,6 +162,9 @@ function AHA_StartWorking3() {
   }
 
   properties.setProperty('SYSTEM_STATUS', 'VALIDATING');
+  properties.deleteProperty("QUARANTINE_COUNT");
+  properties.deleteProperty("RESTART_COUNT_VALIDATING");
+  properties.deleteProperty("RESTART_COUNT_IMPORTING");
 
   properties.setProperty("LAST_VALIDATION_HEARTBEAT", new Date().getTime());
 

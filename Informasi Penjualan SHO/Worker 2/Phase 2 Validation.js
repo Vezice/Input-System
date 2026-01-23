@@ -508,6 +508,8 @@ function AHA_RunValBatchSafely2() {
         Logger.log("Brand Validation sedang Error. Skipping Batch ~");
         logSheet.appendRow([new Date(), "Status", "⚠️ Brand Validation sedang Error. Contact tim FBI. Skipping Batch ~"]);
         AHA_SlackNotify3(`⚠️ Brand Validation sedang Error. Contact team FBI. Skipping Batch for 5 Minutes ${CONFIG.SLACK.MENTION_USER}`);
+        // Update heartbeat so watchdog doesn't falsely detect staleness
+        PropertiesService.getScriptProperties().setProperty("LAST_VALIDATION_HEARTBEAT", new Date().getTime());
         AHA_StartValTrigger2(5); // Reschedule for later.
         return;
       } else {

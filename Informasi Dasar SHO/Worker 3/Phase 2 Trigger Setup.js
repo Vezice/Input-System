@@ -123,6 +123,7 @@ function AHA_StartImport2() {
     AHA_DeleteTriggers2("AHA_StartImport2");
 
     PropertiesService.getScriptProperties().deleteProperty("RESTART_COUNT_VALIDATING");
+    PropertiesService.getScriptProperties().deleteProperty("QUARANTINE_COUNT");
     PropertiesService.getScriptProperties().setProperty('SYSTEM_STATUS', 'IMPORTING');
 
     // --- NEW: Set the initial import heartbeat ---
@@ -232,7 +233,7 @@ function AHA_SystemWatchdog() {
         AHA_DeleteTriggers2("AHA_RunValBatchSafely2");
         // Clear stale folder ID to prevent "Invalid argument: id" errors on restart
         properties.deleteProperty("MOVE_FOLDER_ID");
-        AHA_SlackNotify3(`⚠️ *Watchdog Alert*: System is STALE (no heartbeat in 30 min). Restarting... (Attempt ${newCount}/${MAX_RESTARTS})`);
+        AHA_SlackNotify3(`⚠️ *Watchdog Alert*: System is STALE (no heartbeat in 10 min). Restarting... (Attempt ${newCount}/${MAX_RESTARTS})`);
         AHA_StartValTrigger2(1); // Restart the process
       }
     } else {
@@ -255,7 +256,7 @@ function AHA_SystemWatchdog() {
         const newCount = restartCount + 1;
         properties.setProperty("RESTART_COUNT_IMPORTING", newCount);
         AHA_DeleteTriggers2("AHA_RunImportBatchSafely2");
-        AHA_SlackNotify3(`⚠️ *Watchdog Alert*: IMPORTING is STALE (no heartbeat in 30 min). Restarting... (Attempt ${newCount}/${MAX_RESTARTS})`);
+        AHA_SlackNotify3(`⚠️ *Watchdog Alert*: IMPORTING is STALE (no heartbeat in 10 min). Restarting... (Attempt ${newCount}/${MAX_RESTARTS})`);
         AHA_InstallTrigger2(); // Restart the process
       }
     } else {
@@ -302,6 +303,24 @@ function AHA_QuarantinePoisonPill() {
     if (files.hasNext()) {
       const poisonFile = files.next();
       const fileName = poisonFile.getName();
+
+      // Track total quarantines to prevent infinite loops
+      const quarantineCount = Number(properties.getProperty("QUARANTINE_COUNT") || 0) + 1;
+      properties.setProperty("QUARANTINE_COUNT", String(quarantineCount));
+
+      if (quarantineCount >= 5) {
+        // Too many quarantines in one session - stop the system entirely
+        AHA_SlackNotify3(`🚨 *SYSTEM HALTED*: ${quarantineCount} files quarantined in one session. Manual intervention required. <@U0A6B24777X>`);
+        properties.deleteProperty("RESTART_COUNT_VALIDATING");
+        properties.deleteProperty('SYSTEM_STATUS');
+        AHA_DeleteTriggers2("AHA_RunValBatchSafely2");
+        // Still move this file to Failed before halting
+        const parentFolder = DriveApp.getFolderById(CONFIG.FOLDER_IDS.ROOT_SHARED_DRIVE);
+        const failedFolder = AHA_GetSubFolder2(parentFolder, "Failed");
+        poisonFile.moveTo(failedFolder);
+        AHA_LogFailureToDoc(fileName, `Poison Pill Quarantine #${quarantineCount} (System Halted)`, properties.getProperty("WORKER_CATEGORY") || "Unknown", properties.getProperty("WORKER_COUNT") || "System Watchdog");
+        return; // Don't restart - wait for human intervention
+      }
 
       // 1. Move the file to the Failed folder
       const parentFolder = DriveApp.getFolderById(CONFIG.FOLDER_IDS.ROOT_SHARED_DRIVE);
