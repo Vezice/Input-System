@@ -1,0 +1,14 @@
+# Ignore files for Cloud Functions deployment
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+.env
+.env.*
+*.md
+cloudbuild.yaml
+deploy.sh
+tests/
+.pytest_cache/
+.mypy_cache/

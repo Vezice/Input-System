@@ -1,0 +1,22 @@
+# iBot v2 Cloud Function Dependencies
+
+# Cloud Functions framework
+functions-framework==3.*
+
+# Google Cloud
+google-cloud-bigquery==3.*
+google-cloud-storage==2.*
+
+# Google Sheets API (for dynamic config from Admin Sheet)
+google-api-python-client==2.*
+google-auth==2.*
+
+# Excel/CSV parsing
+openpyxl==3.*
+xlrd==2.*
+
+# HTTP client for Slack
+httpx==0.26.*
+
+# CloudEvents for GCS triggers
+cloudevents==1.*

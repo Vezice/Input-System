@@ -1,0 +1,53 @@
+# iBot v2 Cloud Build Configuration
+# Automated deployment on git push
+
+substitutions:
+  _PROJECT_ID: 'fbi-dev-484410'
+  _REGION: 'asia-southeast2'
+  _IMPORT_BUCKET: 'ibot-v2-imports'
+  _FUNCTION_NAME: 'ibot-v2-import'
+  _HTTP_FUNCTION_NAME: 'ibot-v2-http'
+
+steps:
+  # Step 1: Deploy GCS-triggered function
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud functions deploy ${_FUNCTION_NAME} \
+          --gen2 \
+          --runtime=python311 \
+          --region=${_REGION} \
+          --source=. \
+          --entry-point=process_import \
+          --trigger-event-filters="type=google.cloud.storage.object.v1.finalized" \
+          --trigger-event-filters="bucket=${_IMPORT_BUCKET}" \
+          --memory=512MB \
+          --timeout=540s \
+          --set-env-vars="GOOGLE_CLOUD_PROJECT=${_PROJECT_ID},IMPORT_BUCKET=${_IMPORT_BUCKET},BIGQUERY_DATASET=ibot_v2_data,SLACK_ENABLED=true"
+    dir: 'ibot-v2'
+
+  # Step 2: Deploy HTTP function
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud functions deploy ${_HTTP_FUNCTION_NAME} \
+          --gen2 \
+          --runtime=python311 \
+          --region=${_REGION} \
+          --source=. \
+          --entry-point=http_handler \
+          --trigger-http \
+          --allow-unauthenticated \
+          --memory=512MB \
+          --timeout=540s \
+          --set-env-vars="GOOGLE_CLOUD_PROJECT=${_PROJECT_ID},IMPORT_BUCKET=${_IMPORT_BUCKET},BIGQUERY_DATASET=ibot_v2_data,SLACK_ENABLED=true"
+    dir: 'ibot-v2'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: '600s'
