@@ -169,7 +169,7 @@ function processAndForwardCommand(e) {
         // If no other command matches, assume it's a category to be forwarded.
         const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(linksSheetName);
         if (!sheet) throw new Error(`Sheet "${linksSheetName}" not found.`);
-        
+
         const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, urlColumn).getValues();
         let targetUrl = null;
 
@@ -183,6 +183,22 @@ function processAndForwardCommand(e) {
         if (!targetUrl) {
           throw new Error(`No URL found for category or command: "${commandText}"`);
         }
+
+        // --- iBot v2 Parallel Testing ---
+        // Copy files from Drive to GCS before forwarding to Central
+        // This allows iBot v2 to process the same files as iBot v1
+        try {
+          const gcsResult = copyFilesToGCS(commandText, ROOT_DRIVE_FOLDER_ID);
+          if (gcsResult.uploaded > 0) {
+            Logger.log(`iBot v2: Copied ${gcsResult.uploaded} files to GCS for ${commandText}`);
+          } else if (gcsResult.skipped) {
+            Logger.log(`iBot v2: Skipped - ${gcsResult.reason}`);
+          }
+        } catch (gcsError) {
+          // Don't block iBot v1 if v2 copy fails
+          Logger.log(`iBot v2 copy failed (non-blocking): ${gcsError.message}`);
+        }
+        // --- End iBot v2 ---
 
         const options = {
           'method': 'post',
@@ -924,6 +940,123 @@ function handlePingAllCommand(responseUrl) {
 
   } catch (e) {
     sendSlackResponse(responseUrl, `❌ Error during ping: ${e.message}`);
+  }
+}
+
+
+// iBot v2 Cloud Function configuration
+const IBOT_V2_CONFIG = {
+  UPLOAD_ENDPOINT: 'https://asia-southeast2-fbi-dev-484410.cloudfunctions.net/ibot-v2-http/upload',
+  ENABLED: true  // Set to false to disable parallel testing
+};
+
+
+/**
+ * Copies files from Google Drive to GCS for iBot-v2 parallel testing.
+ * Called before forwarding category commands to Central sheet.
+ *
+ * @param {string} category The category name (e.g., "BA Produk LAZ")
+ * @param {string} rootFolderId The root Drive folder ID
+ * @returns {Object} Result with success status and details
+ */
+function copyFilesToGCS(category, rootFolderId) {
+  if (!IBOT_V2_CONFIG.ENABLED) {
+    return { success: true, skipped: true, reason: 'iBot v2 disabled' };
+  }
+
+  const MOVE_FOLDER_NAME = 'Move';
+
+  try {
+    // Navigate to Move > [Category] > Upload Here
+    const rootFolder = DriveApp.getFolderById(rootFolderId);
+    const moveFolders = rootFolder.getFoldersByName(MOVE_FOLDER_NAME);
+
+    if (!moveFolders.hasNext()) {
+      return { success: false, error: 'Move folder not found' };
+    }
+
+    const moveFolder = moveFolders.next();
+    const categoryFolders = moveFolder.getFoldersByName(category);
+
+    if (!categoryFolders.hasNext()) {
+      return { success: true, skipped: true, reason: `Category folder '${category}' not found` };
+    }
+
+    const categoryFolder = categoryFolders.next();
+    const uploadHereFolders = categoryFolder.getFoldersByName('Upload Here');
+
+    if (!uploadHereFolders.hasNext()) {
+      return { success: true, skipped: true, reason: 'Upload Here folder not found' };
+    }
+
+    const uploadHereFolder = uploadHereFolders.next();
+    const files = uploadHereFolder.getFiles();
+
+    const results = [];
+    let successCount = 0;
+    let failCount = 0;
+
+    while (files.hasNext()) {
+      const file = files.next();
+      const filename = file.getName();
+
+      // Skip non-data files
+      const lowerName = filename.toLowerCase();
+      if (!lowerName.endsWith('.xlsx') && !lowerName.endsWith('.xls') && !lowerName.endsWith('.csv')) {
+        continue;
+      }
+
+      try {
+        // Get file content as base64
+        const blob = file.getBlob();
+        const content = Utilities.base64Encode(blob.getBytes());
+
+        // Send to iBot v2 Cloud Function
+        const payload = {
+          category: category,
+          filename: filename,
+          content: content
+        };
+
+        const options = {
+          method: 'post',
+          contentType: 'application/json',
+          payload: JSON.stringify(payload),
+          muteHttpExceptions: true
+        };
+
+        const response = UrlFetchApp.fetch(IBOT_V2_CONFIG.UPLOAD_ENDPOINT, options);
+        const responseCode = response.getResponseCode();
+
+        if (responseCode === 200) {
+          successCount++;
+          results.push({ filename: filename, status: 'success' });
+        } else {
+          failCount++;
+          const errorText = response.getContentText();
+          results.push({ filename: filename, status: 'failed', error: errorText });
+          Logger.log(`Failed to upload ${filename} to GCS: ${errorText}`);
+        }
+      } catch (fileError) {
+        failCount++;
+        results.push({ filename: filename, status: 'error', error: fileError.message });
+        Logger.log(`Error uploading ${filename}: ${fileError.message}`);
+      }
+    }
+
+    Logger.log(`iBot v2 parallel copy: ${successCount} success, ${failCount} failed for ${category}`);
+
+    return {
+      success: failCount === 0,
+      category: category,
+      uploaded: successCount,
+      failed: failCount,
+      results: results
+    };
+
+  } catch (e) {
+    Logger.log(`Error in copyFilesToGCS: ${e.message}`);
+    return { success: false, error: e.message };
   }
 }
 

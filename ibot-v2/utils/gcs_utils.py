@@ -232,3 +232,39 @@ def download_blob_as_bytes(bucket_name: str, blob_path: str) -> Optional[bytes]:
             error=str(e),
         )
         return None
+
+
+def upload_blob(bucket_name: str, blob_path: str, content: bytes) -> bool:
+    """
+    Upload content to a blob in GCS.
+
+    Args:
+        bucket_name: GCS bucket name
+        blob_path: Destination path in bucket
+        content: File content as bytes
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        client = get_storage_client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_path)
+
+        blob.upload_from_string(content)
+
+        logger.info(
+            "Uploaded blob",
+            path=blob_path,
+            size_bytes=len(content),
+        )
+
+        return True
+
+    except Exception as e:
+        logger.error(
+            "Failed to upload blob",
+            path=blob_path,
+            error=str(e),
+        )
+        return False

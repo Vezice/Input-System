@@ -27,7 +27,7 @@ from config import get_category, get_slack_webhook, settings
 from parser import parse_file
 from bigquery_loader import get_loader
 from slack_notifier import get_notifier
-from utils.gcs_utils import download_blob_as_bytes, move_to_archive, move_to_failed
+from utils.gcs_utils import download_blob_as_bytes, move_to_archive, move_to_failed, upload_blob
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -250,6 +250,50 @@ def http_handler(request: Request):
         status_code = 200 if result.get("success") or result.get("skipped") else 500
 
         return jsonify(result), status_code
+
+    if path == "/upload" and request.method == "POST":
+        # Upload file from Apps Script to GCS for parallel testing
+        import base64
+
+        data = request.get_json(silent=True) or {}
+        category = data.get("category")
+        filename = data.get("filename")
+        content_b64 = data.get("content")
+
+        if not category or not filename or not content_b64:
+            return jsonify({
+                "error": "Missing required fields: category, filename, content"
+            }), 400
+
+        try:
+            # Decode base64 content
+            content = base64.b64decode(content_b64)
+
+            # Build blob path: {category}/{filename}
+            blob_path = f"{category}/{filename}"
+
+            # Upload to GCS
+            success = upload_blob(settings.IMPORT_BUCKET, blob_path, content)
+
+            if success:
+                logger.info(
+                    "File uploaded from Apps Script",
+                    category=category,
+                    filename=filename,
+                    size_bytes=len(content),
+                )
+                return jsonify({
+                    "success": True,
+                    "path": blob_path,
+                    "bucket": settings.IMPORT_BUCKET,
+                    "size_bytes": len(content),
+                })
+            else:
+                return jsonify({"error": "Failed to upload to GCS"}), 500
+
+        except Exception as e:
+            logger.error(f"Upload failed: {e}", exc_info=True)
+            return jsonify({"error": str(e)}), 500
 
     return jsonify({"error": "Not found"}), 404
 
