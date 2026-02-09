@@ -213,7 +213,8 @@ def read_xlsx_file(
     if not EXCEL_SUPPORT:
         raise ImportError("openpyxl is required for Excel support")
 
-    workbook = openpyxl.load_workbook(io.BytesIO(file_content), read_only=True, data_only=True)
+    # Note: read_only=True can cause issues with some files, especially small ones
+    workbook = openpyxl.load_workbook(io.BytesIO(file_content), data_only=True)
 
     if sheet_name:
         if sheet_name not in workbook.sheetnames:
@@ -226,6 +227,7 @@ def read_xlsx_file(
     workbook.close()
 
     if not all_rows or len(all_rows) <= header_row:
+        logger.warning(f"Not enough rows in xlsx: got {len(all_rows)}, need > {header_row}")
         return [], []
 
     # Extract headers

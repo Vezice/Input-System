@@ -27,6 +27,7 @@ from config import get_category, get_slack_webhook, settings
 from parser import parse_file
 from bigquery_loader import get_loader
 from slack_notifier import get_notifier
+from brand_detector import detect_brand_from_data, is_legacy_detection_enabled
 from utils.gcs_utils import download_blob_as_bytes, move_to_archive, move_to_failed, upload_blob
 from utils.logger import get_logger
 
@@ -62,6 +63,46 @@ def extract_info_from_path(blob_path: str) -> tuple[Optional[str], Optional[str]
         brand_code = Path(brand_code).stem
 
     return category_name, brand_code, filename
+
+
+def extract_brand_from_data(parsed_file) -> Optional[str]:
+    """
+    Extract brand code from parsed file data.
+
+    Looks for 'akun' column (used in BA Produk files) and returns
+    the most common value as the brand code.
+
+    Returns:
+        Brand code string, or None if not found
+    """
+    if not parsed_file.rows:
+        return None
+
+    # Look for 'akun' column (case-insensitive)
+    akun_key = None
+    for header in parsed_file.headers:
+        if header.lower() == 'akun':
+            akun_key = header
+            break
+
+    if not akun_key:
+        return None
+
+    # Count occurrences of each value
+    value_counts = {}
+    for row in parsed_file.rows:
+        value = row.get(akun_key, "")
+        if value and str(value).strip():
+            value = str(value).strip()
+            value_counts[value] = value_counts.get(value, 0) + 1
+
+    if not value_counts:
+        return None
+
+    # Return the most common value
+    brand = max(value_counts.keys(), key=lambda x: value_counts[x])
+    logger.info(f"Extracted brand '{brand}' from akun column ({value_counts[brand]} occurrences)")
+    return brand
 
 
 async def process_file(bucket_name: str, blob_path: str) -> dict:
@@ -118,6 +159,29 @@ async def process_file(bucket_name: str, blob_path: str) -> dict:
         await notifier.notify_failure(filename, brand_code, category_name, error_msg)
 
         return {"success": False, "error": error_msg}
+
+    # Try to detect brand from file content if filename-based brand looks invalid
+    # Valid brand codes: all uppercase like "GS", "BR", "HYDR-M", "ALUN-M", "ASV-M"
+    # Invalid: mixed-case words like "Bisnis" (from "Bisnis Analisis...")
+    def is_valid_brand_code(code: str) -> bool:
+        if not code:
+            return False
+        # Valid if the code is all uppercase (letters, digits, dashes, underscores allowed)
+        return code == code.upper()
+
+    if not is_valid_brand_code(brand_code):
+        if is_legacy_detection_enabled():
+            # Use v1-style brand detection from product codes
+            detected_brand = detect_brand_from_data(parsed_file, category_name)
+            if detected_brand:
+                logger.info(f"Using detected brand '{detected_brand}' instead of '{brand_code}'")
+                brand_code = detected_brand
+            else:
+                # Fallback: try to get brand from 'akun' column
+                extracted_brand = extract_brand_from_data(parsed_file)
+                if extracted_brand:
+                    logger.info(f"Using extracted brand '{extracted_brand}' instead of '{brand_code}'")
+                    brand_code = extracted_brand
 
     # Generate import ID
     import_id = f"ibotv2_{category.bigquery_table}_{brand_code}_{uuid.uuid4().hex[:8]}"
@@ -269,8 +333,17 @@ def http_handler(request: Request):
             # Decode base64 content
             content = base64.b64decode(content_b64)
 
+            # Normalize category name to match config format
+            # e.g., "BA DASH TIK" -> "BA Dash TIK"
+            # Marketplace codes (LAZ, SHO, TIK, TOK, BSL) stay uppercase
+            marketplace_codes = {"LAZ", "SHO", "TIK", "TOK", "BSL"}
+            normalized_category = " ".join(
+                word if word.upper() in marketplace_codes else word.title()
+                for word in category.split()
+            )
+
             # Build blob path: {category}/{filename}
-            blob_path = f"{category}/{filename}"
+            blob_path = f"{normalized_category}/{filename}"
 
             # Upload to GCS
             success = upload_blob(settings.IMPORT_BUCKET, blob_path, content)
@@ -293,6 +366,27 @@ def http_handler(request: Request):
 
         except Exception as e:
             logger.error(f"Upload failed: {e}", exc_info=True)
+            return jsonify({"error": str(e)}), 500
+
+    if path == "/sync" and request.method == "POST":
+        # Sync Admin Sheet to BigQuery (called by Cloud Scheduler daily)
+        from admin_sync import sync_all
+
+        try:
+            result = sync_all()
+            success = len(result.get("errors", [])) == 0
+            status_code = 200 if success else 500
+
+            logger.info(
+                "Admin sync completed",
+                total_rows=result.get("total_rows"),
+                errors=len(result.get("errors", [])),
+            )
+
+            return jsonify(result), status_code
+
+        except Exception as e:
+            logger.error(f"Sync failed: {e}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     return jsonify({"error": "Not found"}), 404

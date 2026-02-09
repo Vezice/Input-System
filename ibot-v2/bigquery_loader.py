@@ -3,14 +3,18 @@ iBot v2 BigQuery Loader
 
 Handles uploading parsed data to BigQuery.
 Uses streaming inserts for real-time data loading.
+
+Column naming: Excel-style (A, B, C, ... Z, AA, AB, etc.)
+Row 1 contains original headers for reference.
 """
 
-import re
-from datetime import datetime
+import random
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
+from google.api_core.exceptions import BadRequest, Conflict
 
 from config import CategoryConfig, settings
 from parser import ParsedFile
@@ -19,54 +23,18 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def sanitize_column_name(name: str) -> str:
+def get_column_name(index: int) -> str:
     """
-    Sanitize a column name for BigQuery compatibility.
-
-    BigQuery column name rules:
-    - Must contain only letters, numbers, and underscores
-    - Must start with a letter or underscore
-    - Max 300 characters
+    Convert column index to Excel-style column name.
+    0 -> A, 1 -> B, ..., 25 -> Z, 26 -> AA, 27 -> AB, etc.
     """
-    if not name:
-        return "_empty_"
-
-    # Replace common problematic characters
-    replacements = {
-        '/': '_', '\\': '_', ' ': '_', '-': '_', '.': '_',
-        '(': '_', ')': '_', '[': '_', ']': '_', '{': '_', '}': '_',
-        '%': '_pct', '#': '_num', '@': '_at', '&': '_and',
-        '+': '_plus', '=': '_eq', '<': '_lt', '>': '_gt',
-        '!': '_', '?': '_', ':': '_', ';': '_', ',': '_',
-        "'": '_', '"': '_',
-    }
-
-    sanitized = name
-    for char, replacement in replacements.items():
-        sanitized = sanitized.replace(char, replacement)
-
-    # Remove any remaining invalid characters
-    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', sanitized)
-
-    # Collapse multiple underscores
-    sanitized = re.sub(r'_+', '_', sanitized)
-
-    # Remove leading/trailing underscores
-    sanitized = sanitized.strip('_')
-
-    # Ensure starts with letter or underscore
-    if sanitized and sanitized[0].isdigit():
-        sanitized = '_' + sanitized
-
-    # Handle empty result
-    if not sanitized:
-        sanitized = '_column_'
-
-    # Truncate to 300 characters max
-    if len(sanitized) > 300:
-        sanitized = sanitized[:300]
-
-    return sanitized
+    result = ""
+    while True:
+        result = chr(ord('A') + (index % 26)) + result
+        index = index // 26 - 1
+        if index < 0:
+            break
+    return result
 
 
 class BigQueryLoader:
@@ -102,41 +70,30 @@ class BigQueryLoader:
         except NotFound:
             dataset = bigquery.Dataset(dataset_ref)
             dataset.location = "asia-southeast2"  # Jakarta region
-            dataset.description = "iBot v2 data imports"
+            dataset.description = "iBot v2 data imports (Bronze layer)"
             self.client.create_dataset(dataset)
             logger.info(f"Created dataset {self.dataset_id}")
 
-    def get_schema(self, parsed_file: ParsedFile) -> List[bigquery.SchemaField]:
+    def get_schema(self, num_columns: int) -> List[bigquery.SchemaField]:
         """
-        Build schema from parsed file headers.
+        Build schema with Excel-style column names.
 
-        All data columns are STRING type (type casting done in downstream dbt/queries).
+        Schema: _brand_code, A, B, C, ... (all STRING)
         """
-        # Metadata columns (only brand code)
+        # Metadata column
         schema = [
             bigquery.SchemaField("_brand_code", "STRING", mode="REQUIRED"),
         ]
 
-        # Data columns - all STRING
-        used_names = {f.name.lower() for f in schema}
-        for header in parsed_file.headers:
-            sanitized_name = sanitize_column_name(header)
-
-            # Handle duplicates
-            if sanitized_name.lower() in used_names:
-                counter = 2
-                while f"{sanitized_name}_{counter}".lower() in used_names:
-                    counter += 1
-                sanitized_name = f"{sanitized_name}_{counter}"
-
+        # Data columns: A, B, C, ... (Excel-style)
+        for i in range(num_columns):
             schema.append(
                 bigquery.SchemaField(
-                    name=sanitized_name,
+                    name=get_column_name(i),
                     field_type="STRING",
                     mode="NULLABLE",
                 )
             )
-            used_names.add(sanitized_name.lower())
 
         return schema
 
@@ -144,93 +101,96 @@ class BigQueryLoader:
         self,
         table_name: str,
         schema: List[bigquery.SchemaField],
+        max_retries: int = 3,
     ) -> bigquery.Table:
-        """Create table if it doesn't exist, or update schema if needed."""
+        """Create table if it doesn't exist, or update schema if needed.
+
+        Includes retry logic to handle race conditions when multiple functions
+        try to create the same table simultaneously.
+        """
         table_id = self.get_table_id(table_name)
 
-        try:
-            table = self.client.get_table(table_id)
-            logger.debug(f"Table {table_name} already exists")
+        for attempt in range(max_retries):
+            try:
+                table = self.client.get_table(table_id)
+                logger.debug(f"Table {table_name} already exists")
 
-            # Check if schema needs updating
-            existing_fields = {f.name.lower() for f in table.schema}
-            new_fields = [f for f in schema if f.name.lower() not in existing_fields]
+                # Check if schema needs updating (more columns needed)
+                existing_fields = {f.name for f in table.schema}
+                new_fields = [f for f in schema if f.name not in existing_fields]
 
-            if new_fields:
-                # Add new fields (BigQuery allows adding nullable columns)
-                updated_schema = list(table.schema) + new_fields
-                table.schema = updated_schema
-                self.client.update_table(table, ["schema"])
-                logger.info(f"Updated schema for {table_name}: added {len(new_fields)} fields")
+                if new_fields:
+                    # Add new fields (BigQuery allows adding nullable columns)
+                    updated_schema = list(table.schema) + new_fields
+                    table.schema = updated_schema
+                    self.client.update_table(table, ["schema"])
+                    logger.info(f"Updated schema for {table_name}: added {len(new_fields)} columns")
 
-            return table
+                return table
 
-        except NotFound:
-            # Create new table
-            table = bigquery.Table(table_id, schema=schema)
+            except NotFound:
+                # Create new table
+                try:
+                    table = bigquery.Table(table_id, schema=schema)
 
-            # Add partitioning
-            table.time_partitioning = bigquery.TimePartitioning(
-                type_=bigquery.TimePartitioningType.DAY,
-                field="_import_timestamp",
-            )
+                    # Add clustering by brand code for efficient queries
+                    table.clustering_fields = ["_brand_code"]
 
-            # Add clustering
-            table.clustering_fields = ["_brand_code", "_source_file"]
+                    table = self.client.create_table(table)
+                    logger.info(f"Created table {table_name} with {len(schema)} columns")
 
-            table = self.client.create_table(table)
-            logger.info(f"Created table {table_name} with {len(schema)} columns")
+                    # Wait for table to be ready
+                    time.sleep(5)
 
-            # Wait for table to be ready
-            import time
-            time.sleep(5)
+                    return table
 
-            return table
+                except Conflict:
+                    # Table was created by another concurrent function
+                    # Wait a bit and retry to get the table
+                    logger.info(f"Table {table_name} created by another process, retrying...")
+                    time.sleep(1 + random.random())
+                    continue
+
+        # All retries exhausted, try one more get
+        return self.client.get_table(table_id)
 
     def prepare_rows(
         self,
         parsed_file: ParsedFile,
         brand_code: str,
         import_id: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[Dict[str, str], List[Dict[str, Any]]]:
         """
-        Prepare rows for BigQuery insert by adding metadata.
+        Prepare rows for BigQuery insert.
 
-        All values converted to strings.
+        Returns:
+            Tuple of (header_row, data_rows)
+            - header_row: Row with original column headers (brand_code = "_header_")
+            - data_rows: Actual data rows with Excel-style column names
         """
-        prepared_rows = []
+        # Build header row (Row 1 in BigQuery)
+        header_row = {"_brand_code": "_header_"}
+        for i, header in enumerate(parsed_file.headers):
+            col_name = get_column_name(i)
+            header_row[col_name] = str(header) if header else ""
 
-        # Build column name mapping (original -> sanitized)
-        column_mapping = {}
-        used_names = set()
-        for header in parsed_file.headers:
-            sanitized = sanitize_column_name(header)
-            if sanitized in used_names:
-                counter = 2
-                while f"{sanitized}_{counter}" in used_names:
-                    counter += 1
-                sanitized = f"{sanitized}_{counter}"
-            column_mapping[header] = sanitized
-            used_names.add(sanitized)
-
+        # Build data rows
+        data_rows = []
         for row in parsed_file.rows:
-            # Process each cell value with sanitized column names
-            cleaned_row = {}
-            for original_key, value in row.items():
-                sanitized_key = column_mapping.get(original_key, sanitize_column_name(original_key))
+            prepared_row = {"_brand_code": brand_code}
+
+            for i, header in enumerate(parsed_file.headers):
+                col_name = get_column_name(i)
+                value = row.get(header, "")
                 # Convert value to string, handle None
                 if value is None:
-                    cleaned_row[sanitized_key] = ""
+                    prepared_row[col_name] = ""
                 else:
-                    cleaned_row[sanitized_key] = str(value)
+                    prepared_row[col_name] = str(value)
 
-            prepared_row = {
-                "_brand_code": brand_code,
-                **cleaned_row,
-            }
-            prepared_rows.append(prepared_row)
+            data_rows.append(prepared_row)
 
-        return prepared_rows
+        return header_row, data_rows
 
     def streaming_insert(
         self,
@@ -271,11 +231,19 @@ class BigQueryLoader:
 
         return total_inserted, errors
 
-    def delete_brand_data(self, brand_code: str, table_name: str) -> int:
+    def delete_brand_data(
+        self,
+        brand_code: str,
+        table_name: str,
+        max_retries: int = 5,
+    ) -> int:
         """
         Delete all rows for a specific brand from a table.
 
         Used for BA Produk categories which are daily snapshots.
+        Note: Does NOT delete the header row (_brand_code = "_header_").
+
+        Includes retry logic with exponential backoff for concurrent DML rate limits.
         """
         table_id = self.get_table_id(table_name)
 
@@ -290,23 +258,67 @@ class BigQueryLoader:
             ]
         )
 
-        try:
-            query_job = self.client.query(query, job_config=job_config)
-            query_job.result()
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                query_job = self.client.query(query, job_config=job_config)
+                query_job.result()
 
-            rows_deleted = query_job.num_dml_affected_rows
-            logger.info(
-                f"Deleted {rows_deleted} rows for brand {brand_code} from {table_name}",
-                brand_code=brand_code,
-                table=table_name,
-            )
-            return rows_deleted
-        except NotFound:
-            logger.debug(f"Table {table_name} not found, nothing to delete")
-            return 0
-        except Exception as e:
-            logger.warning(f"Failed to delete brand data: {e}")
-            return 0
+                rows_deleted = query_job.num_dml_affected_rows
+                logger.info(
+                    f"Deleted {rows_deleted} rows for brand {brand_code} from {table_name}",
+                    brand_code=brand_code,
+                    table=table_name,
+                )
+                return rows_deleted
+
+            except NotFound:
+                logger.debug(f"Table {table_name} not found, nothing to delete")
+                return 0
+
+            except BadRequest as e:
+                # Check if it's a concurrent DML rate limit error
+                error_msg = str(e)
+                if "Too many DML statements" in error_msg or "concurrent" in error_msg.lower():
+                    last_error = e
+                    # Exponential backoff with jitter: 2^attempt + random(0-1) seconds
+                    wait_time = (2 ** attempt) + random.random()
+                    logger.warning(
+                        f"Concurrent DML rate limit hit, retrying in {wait_time:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.warning(f"Failed to delete brand data: {e}")
+                    return 0
+
+            except Exception as e:
+                logger.warning(f"Failed to delete brand data: {e}")
+                return 0
+
+        # All retries exhausted
+        logger.error(f"Failed to delete brand data after {max_retries} retries: {last_error}")
+        return 0
+
+    def header_row_exists(self, table_name: str) -> bool:
+        """Check if header row already exists in the table."""
+        table_id = self.get_table_id(table_name)
+
+        query = f"""
+        SELECT COUNT(*) as cnt
+        FROM `{table_id}`
+        WHERE _brand_code = '_header_'
+        """
+
+        try:
+            result = self.client.query(query).result()
+            for row in result:
+                return row.cnt > 0
+        except Exception:
+            return False
+
+        return False
 
     def upload(
         self,
@@ -316,6 +328,11 @@ class BigQueryLoader:
     ) -> Tuple[bool, Dict[str, Any]]:
         """
         Upload a parsed file to BigQuery.
+
+        Format:
+        - Row 1 (if not exists): Header row with _brand_code = "_header_"
+        - Row 2+: Data rows with actual brand codes
+        - Columns: _brand_code, A, B, C, ... (Excel-style)
 
         Returns:
             Tuple of (success, result_info)
@@ -330,30 +347,43 @@ class BigQueryLoader:
             import_id=import_id,
             table=category.bigquery_table,
             rows=len(parsed_file.rows),
+            columns=len(parsed_file.headers),
         )
 
         try:
             # Ensure dataset exists
             self.ensure_dataset_exists()
 
-            # Get schema
-            schema = self.get_schema(parsed_file)
+            # Get schema based on number of columns
+            schema = self.get_schema(len(parsed_file.headers))
 
             # Ensure table exists
             self.ensure_table_exists(category.bigquery_table, schema)
 
-            # BA Produk categories are daily snapshots - DELETE existing brand data first
-            if "BA Produk" in category.name:
+            # These categories are snapshots - DELETE existing brand data first
+            # BA Dash is historical (append-only), so it's NOT in this list
+            snapshot_categories = ["BA Produk", "Informasi", "Export SKU", "Demografis", "Proyeksi"]
+            is_snapshot = any(cat in category.name for cat in snapshot_categories)
+
+            if is_snapshot:
                 deleted = self.delete_brand_data(brand_code, category.bigquery_table)
                 logger.info(f"Deleted {deleted} existing rows for {brand_code} before import")
 
             # Prepare rows
-            prepared_rows = self.prepare_rows(parsed_file, brand_code, import_id)
+            header_row, data_rows = self.prepare_rows(parsed_file, brand_code, import_id)
+
+            # Check if we need to insert header row
+            rows_to_insert = []
+            if not self.header_row_exists(category.bigquery_table):
+                rows_to_insert.append(header_row)
+                logger.info("Inserting header row")
+
+            rows_to_insert.extend(data_rows)
 
             # Upload using streaming insert
             rows_inserted, errors = self.streaming_insert(
                 category.bigquery_table,
-                prepared_rows,
+                rows_to_insert,
                 batch_size=settings.BATCH_SIZE,
             )
 
@@ -361,7 +391,7 @@ class BigQueryLoader:
                 "import_id": import_id,
                 "table": category.bigquery_table,
                 "rows_inserted": rows_inserted,
-                "rows_total": len(prepared_rows),
+                "rows_total": len(rows_to_insert),
                 "errors": errors,
             }
 

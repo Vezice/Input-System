@@ -872,8 +872,14 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
             const currentHeader = standardHeaders[i];
             
             // Handle Date (Always the first column)
-            if (i === 0) { 
+            if (i === 0) {
                 try {
+                    // Handle date range format (e.g., "2025-11-01~2025-11-30")
+                    // Extract just the first date
+                    if (typeof value === 'string' && value.includes('~')) {
+                        value = value.split('~')[0].trim();
+                    }
+
                     if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}$/)) {
                         const dateObject = new Date(value);
                         value = Utilities.formatDate(dateObject, Session.getScriptTimeZone(), "dd MMM yyyy");

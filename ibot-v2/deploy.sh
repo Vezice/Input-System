@@ -55,7 +55,7 @@ gcloud functions deploy "$FUNCTION_NAME" \
     --trigger-event-filters="bucket=$BUCKET_NAME" \
     --memory=512MB \
     --timeout=540s \
-    --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,IMPORT_BUCKET=$BUCKET_NAME,BIGQUERY_DATASET=ibot_v2_data,SLACK_ENABLED=true"
+    --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,IMPORT_BUCKET=$BUCKET_NAME,BIGQUERY_DATASET=ibot_v2_data,SLACK_ENABLED=true,LEGACY_BRAND_DETECTION=true"
 
 echo ""
 echo "Deploying HTTP function: $HTTP_FUNCTION_NAME..."
@@ -69,7 +69,7 @@ gcloud functions deploy "$HTTP_FUNCTION_NAME" \
     --allow-unauthenticated \
     --memory=512MB \
     --timeout=540s \
-    --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,IMPORT_BUCKET=$BUCKET_NAME,BIGQUERY_DATASET=ibot_v2_data,SLACK_ENABLED=true"
+    --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,IMPORT_BUCKET=$BUCKET_NAME,BIGQUERY_DATASET=ibot_v2_data,SLACK_ENABLED=true,LEGACY_BRAND_DETECTION=true"
 
 echo ""
 echo "=== Deployment Complete ==="
