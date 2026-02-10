@@ -165,6 +165,14 @@ function processAndForwardCommand(e) {
         }
         break;
 
+      case 'uploadgcs':
+        if (subCommand) {
+          handleUploadToGCS(payloadParams.response_url, subCommand);
+        } else {
+          sendSlackResponse(payloadParams.response_url, "Please specify category and Drive link.\nExample: `/ibot uploadgcs BA Produk SHO https://drive.google.com/drive/folders/...`");
+        }
+        break;
+
       default:
         // If no other command matches, assume it's a category to be forwarded.
         const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(linksSheetName);
@@ -568,6 +576,9 @@ function handleHelpCommand(responseUrl) {
 
 *Cleanup Commands:*
 • \`/ibot removeduplicates [category]\` - Remove duplicate files from Upload Here folder
+
+*iBot v2 Commands:*
+• \`/ibot uploadgcs [category] [drive_link]\` - Upload files from Drive folder to GCS for v2 processing
 
 *Info Commands:*
 • \`/ibot status\` - System health check
@@ -1083,6 +1094,178 @@ function copyFilesToGCS(category, rootFolderId, responseUrl) {
     if (responseUrl) {
       sendSlackResponse(responseUrl, `❌ *iBot v2:* Error copying files - ${e.message}`);
     }
+    return { success: false, error: e.message };
+  }
+}
+
+
+/**
+ * Handles the /ibot uploadgcs [CATEGORY] [DRIVE_LINK] command
+ * Uploads files from a Google Drive folder directly to GCS for iBot v2 processing.
+ * @param {string} responseUrl The Slack response URL.
+ * @param {string} input The command input containing category and Drive link.
+ */
+function handleUploadToGCS(responseUrl, input) {
+  try {
+    // Parse input: expect "CATEGORY https://drive.google.com/..."
+    // Category can be multi-word like "BA Produk SHO"
+    const urlMatch = input.match(/(https:\/\/drive\.google\.com\/[^\s]+)/);
+
+    if (!urlMatch) {
+      sendSlackResponse(responseUrl, "❌ No valid Google Drive link found.\nExample: `/ibot uploadgcs BA Produk SHO https://drive.google.com/drive/folders/...`");
+      return;
+    }
+
+    const driveUrl = urlMatch[1];
+    const category = input.replace(driveUrl, '').trim();
+
+    if (!category) {
+      sendSlackResponse(responseUrl, "❌ Please specify a category before the Drive link.\nExample: `/ibot uploadgcs BA Produk SHO https://drive.google.com/drive/folders/...`");
+      return;
+    }
+
+    // Extract folder/file ID from Drive URL
+    const folderId = extractDriveId(driveUrl);
+    if (!folderId) {
+      sendSlackResponse(responseUrl, "❌ Could not extract folder ID from the Drive link. Please check the URL.");
+      return;
+    }
+
+    sendSlackResponse(responseUrl, `📤 *Uploading files to GCS...*\nCategory: ${category}\nDrive ID: ${folderId}`);
+
+    // Get files from Drive folder
+    let folder;
+    try {
+      folder = DriveApp.getFolderById(folderId);
+    } catch (e) {
+      // Maybe it's a file, not a folder
+      try {
+        const file = DriveApp.getFileById(folderId);
+        // Single file upload
+        const result = uploadSingleFileToGCS(file, category);
+        if (result.success) {
+          sendSlackResponse(responseUrl, `✅ *iBot v2:* Uploaded 1 file to GCS for ${category}\n• ${file.getName()}`);
+        } else {
+          sendSlackResponse(responseUrl, `❌ Failed to upload ${file.getName()}: ${result.error}`);
+        }
+        return;
+      } catch (e2) {
+        sendSlackResponse(responseUrl, `❌ Could not access Drive folder/file. Make sure the link is accessible.\nError: ${e.message}`);
+        return;
+      }
+    }
+
+    // Get all files from folder
+    const files = folder.getFiles();
+    const results = [];
+    let successCount = 0;
+    let failCount = 0;
+    let skippedCount = 0;
+
+    while (files.hasNext()) {
+      const file = files.next();
+      const filename = file.getName();
+      const lowerName = filename.toLowerCase();
+
+      // Skip non-data files
+      if (!lowerName.endsWith('.xlsx') && !lowerName.endsWith('.xls') && !lowerName.endsWith('.csv')) {
+        skippedCount++;
+        continue;
+      }
+
+      const result = uploadSingleFileToGCS(file, category);
+      if (result.success) {
+        successCount++;
+        results.push(`✅ ${filename}`);
+      } else {
+        failCount++;
+        results.push(`❌ ${filename}: ${result.error}`);
+      }
+    }
+
+    // Build response
+    let message = `📤 *GCS Upload Complete - ${category}*\n\n`;
+    message += `✅ Uploaded: ${successCount}\n`;
+    if (failCount > 0) message += `❌ Failed: ${failCount}\n`;
+    if (skippedCount > 0) message += `⏭️ Skipped (non-data): ${skippedCount}\n`;
+
+    if (successCount + failCount === 0) {
+      message += `\n⚠️ No data files (.xlsx, .xls, .csv) found in folder.`;
+    } else if (results.length <= 20) {
+      message += `\n*Files:*\n${results.join('\n')}`;
+    } else {
+      message += `\n*Files (first 20):*\n${results.slice(0, 20).join('\n')}\n_...and ${results.length - 20} more_`;
+    }
+
+    sendSlackResponse(responseUrl, message);
+
+  } catch (e) {
+    sendSlackResponse(responseUrl, `❌ Error uploading to GCS: ${e.message}`);
+  }
+}
+
+
+/**
+ * Extracts folder or file ID from a Google Drive URL.
+ * Supports various Drive URL formats.
+ * @param {string} url The Google Drive URL.
+ * @returns {string|null} The extracted ID or null if not found.
+ */
+function extractDriveId(url) {
+  // Format: https://drive.google.com/drive/folders/FOLDER_ID
+  let match = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+
+  // Format: https://drive.google.com/file/d/FILE_ID/view
+  match = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+
+  // Format: https://drive.google.com/open?id=ID
+  match = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+
+  // Format: https://docs.google.com/spreadsheets/d/ID/edit
+  match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+
+  return null;
+}
+
+
+/**
+ * Uploads a single file to GCS via the iBot v2 upload endpoint.
+ * @param {GoogleAppsScript.Drive.File} file The Drive file to upload.
+ * @param {string} category The category name for GCS path.
+ * @returns {Object} Result with success status.
+ */
+function uploadSingleFileToGCS(file, category) {
+  try {
+    const filename = file.getName();
+    const blob = file.getBlob();
+    const content = Utilities.base64Encode(blob.getBytes());
+
+    const payload = {
+      category: category,
+      filename: filename,
+      content: content
+    };
+
+    const options = {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    };
+
+    const response = UrlFetchApp.fetch(IBOT_V2_CONFIG.UPLOAD_ENDPOINT, options);
+    const responseCode = response.getResponseCode();
+
+    if (responseCode === 200) {
+      return { success: true };
+    } else {
+      return { success: false, error: response.getContentText() };
+    }
+  } catch (e) {
     return { success: false, error: e.message };
   }
 }
