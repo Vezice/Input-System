@@ -84,6 +84,8 @@ function processAndForwardCommand(e) {
     const commandParts = commandText.toLowerCase().split(/\s+/);
     const mainCommand = commandParts[0];
     const subCommand = commandParts.slice(1).join(' ');
+    // Preserve original case for commands that need it (e.g., Drive URLs)
+    const originalSubCommand = commandText.substring(commandText.indexOf(' ') + 1).trim();
 
     // --- NEW: DUPLICATE COMMAND CHECK ---
     const cache = CacheService.getScriptCache();
@@ -166,10 +168,11 @@ function processAndForwardCommand(e) {
         break;
 
       case 'uploadgcs':
-        if (subCommand) {
-          handleUploadToGCS(payloadParams.response_url, subCommand);
+        if (originalSubCommand) {
+          // Use originalSubCommand to preserve case-sensitive Drive URLs
+          handleUploadToGCS(payloadParams.response_url, originalSubCommand);
         } else {
-          sendSlackResponse(payloadParams.response_url, "Please specify category and Drive link.\nExample: `/ibot uploadgcs BA Produk SHO https://drive.google.com/drive/folders/...`");
+          sendSlackResponse(responseUrl, "Please specify category and Drive link.\nExample: `/ibot uploadgcs BA Produk SHO https://drive.google.com/drive/folders/...`");
         }
         break;
 
