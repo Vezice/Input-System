@@ -184,9 +184,21 @@ def _load_categories_from_bigquery() -> Optional[Dict[str, CategoryConfig]]:
             logger.info("No type validation data in BigQuery")
             return None
 
-        # Merge with webhooks
+        # Load column aliases from Unique Column sheet
+        all_aliases = _load_unique_column_from_bigquery()
+
+        # Merge with webhooks and aliases
         for cat in type_configs:
             name = cat["name"]
+
+            # Merge header_aliases from Type Validation with column_aliases from Unique Column
+            merged_aliases = dict(cat.get("header_aliases", {}))
+            unique_aliases = all_aliases.get(name, {})
+            for std_col, aliases in unique_aliases.items():
+                if std_col not in merged_aliases:
+                    merged_aliases[std_col] = []
+                merged_aliases[std_col].extend(aliases)
+
             categories[name] = CategoryConfig(
                 name=name,
                 category_type=cat["category_type"],
@@ -196,7 +208,7 @@ def _load_categories_from_bigquery() -> Optional[Dict[str, CategoryConfig]]:
                 slack_webhook_url=webhooks.get(name, ""),
                 header_row=cat["header_row"],
                 data_start_row=cat["data_start_row"],
-                column_aliases={},
+                column_aliases=merged_aliases,
             )
 
         logger.info(f"Loaded {len(categories)} categories from BigQuery")
@@ -207,11 +219,93 @@ def _load_categories_from_bigquery() -> Optional[Dict[str, CategoryConfig]]:
         return None
 
 
+def _load_unique_column_from_bigquery() -> Dict[str, Dict[str, List[str]]]:
+    """Load column aliases from BigQuery unique_column table.
+
+    Returns:
+        Dict mapping category_name -> {standard_column -> [aliases]}
+    """
+    try:
+        from google.cloud.exceptions import NotFound
+
+        client = _get_bq_client()
+        table_id = f"{PROJECT_ID}.{CONFIG_DATASET}.unique_column"
+
+        try:
+            client.get_table(table_id)
+        except NotFound:
+            logger.debug("BigQuery unique_column table not found")
+            return {}
+
+        query = f"SELECT * FROM `{table_id}`"
+        rows = list(client.query(query).result())
+
+        if not rows:
+            return {}
+
+        aliases: Dict[str, Dict[str, List[str]]] = {}
+        is_first = True
+
+        for row in rows:
+            row_dict = dict(row)
+            a_val = row_dict.get("A", "")
+
+            # Skip header row
+            if is_first or (a_val and a_val.lower() in ["category", "kategori"]):
+                is_first = False
+                continue
+
+            if not a_val:
+                continue
+
+            category_name = a_val
+            standard_column = row_dict.get("B", "")
+            action_type = row_dict.get("C", "")  # COALESCE_EXACT, etc.
+
+            # Columns D onwards contain replacement patterns
+            replacements = []
+            for col in ["D", "E", "F", "G", "H", "I", "J"]:
+                val = row_dict.get(col, "")
+                if val:
+                    replacements.append(val)
+
+            if not standard_column or not replacements:
+                continue
+
+            if category_name not in aliases:
+                aliases[category_name] = {}
+            if standard_column not in aliases[category_name]:
+                aliases[category_name][standard_column] = []
+
+            # Store with action type prefix if not COALESCE_EXACT (default)
+            if action_type and action_type.upper() == "SUM_STARTS_WITH":
+                # Mark these as sum patterns by prefixing with SUM:
+                aliases[category_name][standard_column].extend(
+                    [f"SUM:{r}" for r in replacements]
+                )
+            elif action_type and action_type.upper() == "COALESCE_STARTS_WITH":
+                # Mark as starts_with by adding * suffix
+                aliases[category_name][standard_column].extend(
+                    [f"{r}*" for r in replacements]
+                )
+            else:
+                # Default: exact match
+                aliases[category_name][standard_column].extend(replacements)
+
+        logger.info(f"Loaded column aliases for {len(aliases)} categories from BigQuery")
+        return aliases
+
+    except Exception as e:
+        logger.warning(f"Failed to load unique_column from BigQuery: {e}")
+        return {}
+
+
 def _load_type_validation_from_bigquery() -> List[Dict[str, Any]]:
     """Load type validation config from BigQuery.
 
-    Handles multiple rows per category (e.g., Indonesian + English headers)
-    by combining all header variants into a single config.
+    Handles multiple rows per category (e.g., Indonesian + English headers).
+    The FIRST row defines the standard header ORDER.
+    Subsequent rows define ALIASES for each corresponding column position.
     """
     try:
         from google.cloud.exceptions import NotFound
@@ -230,9 +324,11 @@ def _load_type_validation_from_bigquery() -> List[Dict[str, Any]]:
         if not rows:
             return []
 
-        # Group rows by category name to combine header variants
+        # Group rows by category name
+        # First row = standard headers (in order), additional rows = aliases per column
         category_data: Dict[str, Dict[str, Any]] = {}
         is_first = True
+        header_columns = ["E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"]
 
         for row in rows:
             row_dict = dict(row)
@@ -250,13 +346,12 @@ def _load_type_validation_from_bigquery() -> List[Dict[str, Any]]:
 
             # Extract headers from this row (columns E onwards)
             row_headers = []
-            for col in ["E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T"]:
+            for col in header_columns:
                 val = row_dict.get(col, "")
-                if val:
-                    row_headers.append(val)
+                row_headers.append(val if val else "")
 
             if category_name not in category_data:
-                # First row for this category - initialize
+                # First row for this category - these ARE the standard headers (in order)
                 header_row = int(row_dict.get("B", 1)) - 1 if row_dict.get("B") else 0
                 data_row = int(row_dict.get("C", 2)) - 1 if row_dict.get("C") else 1
 
@@ -265,6 +360,9 @@ def _load_type_validation_from_bigquery() -> List[Dict[str, Any]]:
                 marketplace = parts[1] if len(parts) == 2 else "UNKNOWN"
                 bq_table = category_name.lower().replace(" ", "_")
 
+                # Filter out empty headers but preserve order
+                standard_headers = [h for h in row_headers if h]
+
                 category_data[category_name] = {
                     "name": category_name,
                     "category_type": category_type,
@@ -272,16 +370,27 @@ def _load_type_validation_from_bigquery() -> List[Dict[str, Any]]:
                     "bigquery_table": bq_table,
                     "header_row": header_row,
                     "data_start_row": data_row,
-                    "required_headers": set(row_headers),  # Use set to avoid duplicates
+                    "required_headers": standard_headers,  # Ordered list from first row
+                    "header_aliases": {},  # {standard_header: [aliases]}
                 }
             else:
-                # Additional row (e.g., different language) - merge headers
-                category_data[category_name]["required_headers"].update(row_headers)
+                # Additional row = aliases for corresponding positions
+                # Map each position's header to the standard header at same position
+                standard_headers = category_data[category_name]["required_headers"]
+                aliases = category_data[category_name]["header_aliases"]
 
-        # Convert sets back to lists
+                for i, alias in enumerate(row_headers):
+                    if alias and i < len(standard_headers):
+                        std_header = standard_headers[i]
+                        if std_header and alias != std_header:
+                            if std_header not in aliases:
+                                aliases[std_header] = []
+                            if alias not in aliases[std_header]:
+                                aliases[std_header].append(alias)
+
+        # Build final categories list
         categories = []
         for cat_data in category_data.values():
-            cat_data["required_headers"] = list(cat_data["required_headers"])
             categories.append(cat_data)
 
         return categories

@@ -188,7 +188,7 @@ function processAndForwardCommand(e) {
         // Copy files from Drive to GCS before forwarding to Central
         // This allows iBot v2 to process the same files as iBot v1
         try {
-          const gcsResult = copyFilesToGCS(commandText, ROOT_DRIVE_FOLDER_ID);
+          const gcsResult = copyFilesToGCS(commandText, ROOT_DRIVE_FOLDER_ID, payloadParams.response_url);
           if (gcsResult.uploaded > 0) {
             Logger.log(`iBot v2: Copied ${gcsResult.uploaded} files to GCS for ${commandText}`);
           } else if (gcsResult.skipped) {
@@ -957,9 +957,10 @@ const IBOT_V2_CONFIG = {
  *
  * @param {string} category The category name (e.g., "BA Produk LAZ")
  * @param {string} rootFolderId The root Drive folder ID
+ * @param {string} responseUrl Optional Slack response URL for notifications
  * @returns {Object} Result with success status and details
  */
-function copyFilesToGCS(category, rootFolderId) {
+function copyFilesToGCS(category, rootFolderId, responseUrl) {
   if (!IBOT_V2_CONFIG.ENABLED) {
     return { success: true, skipped: true, reason: 'iBot v2 disabled' };
   }
@@ -972,6 +973,9 @@ function copyFilesToGCS(category, rootFolderId) {
     const moveFolders = rootFolder.getFoldersByName(MOVE_FOLDER_NAME);
 
     if (!moveFolders.hasNext()) {
+      if (responseUrl) {
+        sendSlackResponse(responseUrl, `⚠️ *iBot v2:* Move folder not found`);
+      }
       return { success: false, error: 'Move folder not found' };
     }
 
@@ -979,6 +983,9 @@ function copyFilesToGCS(category, rootFolderId) {
     const categoryFolders = moveFolder.getFoldersByName(category);
 
     if (!categoryFolders.hasNext()) {
+      if (responseUrl) {
+        sendSlackResponse(responseUrl, `⚠️ *iBot v2:* Category folder '${category}' not found in Move`);
+      }
       return { success: true, skipped: true, reason: `Category folder '${category}' not found` };
     }
 
@@ -986,6 +993,9 @@ function copyFilesToGCS(category, rootFolderId) {
     const uploadHereFolders = categoryFolder.getFoldersByName('Upload Here');
 
     if (!uploadHereFolders.hasNext()) {
+      if (responseUrl) {
+        sendSlackResponse(responseUrl, `⚠️ *iBot v2:* 'Upload Here' folder not found in ${category}`);
+      }
       return { success: true, skipped: true, reason: 'Upload Here folder not found' };
     }
 
@@ -995,6 +1005,7 @@ function copyFilesToGCS(category, rootFolderId) {
     const results = [];
     let successCount = 0;
     let failCount = 0;
+    let totalFiles = 0;
 
     while (files.hasNext()) {
       const file = files.next();
@@ -1005,6 +1016,8 @@ function copyFilesToGCS(category, rootFolderId) {
       if (!lowerName.endsWith('.xlsx') && !lowerName.endsWith('.xls') && !lowerName.endsWith('.csv')) {
         continue;
       }
+
+      totalFiles++;
 
       try {
         // Get file content as base64
@@ -1046,6 +1059,17 @@ function copyFilesToGCS(category, rootFolderId) {
 
     Logger.log(`iBot v2 parallel copy: ${successCount} success, ${failCount} failed for ${category}`);
 
+    // Send Slack notification with results
+    if (responseUrl) {
+      if (totalFiles === 0) {
+        sendSlackResponse(responseUrl, `ℹ️ *iBot v2:* No files to upload for ${category} (Upload Here folder is empty)`);
+      } else if (failCount === 0) {
+        sendSlackResponse(responseUrl, `✅ *iBot v2:* Uploaded ${successCount} files to GCS for ${category}`);
+      } else {
+        sendSlackResponse(responseUrl, `⚠️ *iBot v2:* Uploaded ${successCount}/${totalFiles} files to GCS for ${category} (${failCount} failed)`);
+      }
+    }
+
     return {
       success: failCount === 0,
       category: category,
@@ -1056,6 +1080,9 @@ function copyFilesToGCS(category, rootFolderId) {
 
   } catch (e) {
     Logger.log(`Error in copyFilesToGCS: ${e.message}`);
+    if (responseUrl) {
+      sendSlackResponse(responseUrl, `❌ *iBot v2:* Error copying files - ${e.message}`);
+    }
     return { success: false, error: e.message };
   }
 }

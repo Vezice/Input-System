@@ -3,6 +3,7 @@ iBot v2 File Parser
 
 Parses Excel (.xlsx, .xls) and CSV files for data import.
 Handles Indonesian number formats and date formats.
+Includes column mapping to normalize data to standard column order.
 """
 
 import csv
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from config import CategoryConfig
+from column_mapper import ColumnMapper, create_mapper_for_category
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -47,6 +49,8 @@ class ParsedFile:
         total_rows: int,
         skipped_rows: int = 0,
         errors: List[str] = None,
+        column_mapped: bool = False,
+        source_headers: List[str] = None,
     ):
         self.filename = filename
         self.headers = headers
@@ -55,6 +59,8 @@ class ParsedFile:
         self.total_rows = total_rows
         self.skipped_rows = skipped_rows
         self.errors = errors or []
+        self.column_mapped = column_mapped  # True if column mapping was applied
+        self.source_headers = source_headers or []  # Original headers before mapping
 
     @property
     def is_valid(self) -> bool:
@@ -69,6 +75,7 @@ class ParsedFile:
             "parsed_rows": len(self.rows),
             "skipped_rows": self.skipped_rows,
             "errors": self.errors,
+            "column_mapped": self.column_mapped,
         }
 
 
@@ -346,8 +353,52 @@ def parse_file(
             errors=["No headers found in file"],
         )
 
-    # Clean headers for use as column names
-    cleaned_headers = [clean_header(h) for h in headers]
+    # Filter out empty rows before mapping
+    filtered_rows = []
+    skipped = 0
+    for row in raw_rows:
+        if not row or all(cell is None or (isinstance(cell, str) and not cell.strip()) for cell in row):
+            skipped += 1
+            continue
+        filtered_rows.append(row)
+
+    # Apply column mapping to normalize data to standard column order
+    # This handles files with different column layouts
+    column_mapped = False
+    source_headers = list(headers)  # Keep original headers
+
+    if category.required_headers:
+        try:
+            mapper = create_mapper_for_category(
+                category_name=category.name,
+                standard_headers=category.required_headers,
+                column_aliases=category.column_aliases,
+            )
+
+            # Map columns - this normalizes the data to standard column order
+            mapped_headers, mapped_rows = mapper.map_file(headers, filtered_rows)
+
+            logger.info(
+                f"Column mapping applied: {len(headers)} source cols -> {len(mapped_headers)} standard cols",
+                source_cols=len(headers),
+                mapped_cols=len(mapped_headers),
+            )
+
+            # Use mapped data
+            output_headers = mapped_headers
+            parsed_rows = mapped_rows
+            column_mapped = True
+
+        except Exception as e:
+            logger.warning(f"Column mapping failed, using raw data: {e}")
+            # Fallback to raw data if mapping fails
+            output_headers, parsed_rows = _parse_raw_data(headers, filtered_rows, errors)
+    else:
+        # No standard headers defined - use raw data
+        output_headers, parsed_rows = _parse_raw_data(headers, filtered_rows, errors)
+
+    # Clean headers for BigQuery column names
+    cleaned_headers = [clean_header(h) for h in output_headers]
 
     # Ensure unique column names
     seen = {}
@@ -362,45 +413,60 @@ def parse_file(
             seen[h] = 0
             unique_headers.append(h)
 
-    # Parse rows
-    parsed_rows = []
-    skipped = 0
-
-    for row_idx, row in enumerate(raw_rows):
-        # Skip completely empty rows
-        if not row or all(cell is None or (isinstance(cell, str) and not cell.strip()) for cell in row):
-            skipped += 1
-            continue
-
-        try:
-            row_dict = {}
-            for col_idx, header in enumerate(unique_headers):
-                if col_idx < len(row):
-                    cell_value = row[col_idx]
-                    row_dict[header] = parse_cell_value(cell_value, header)
-                else:
-                    row_dict[header] = ""
-
-            parsed_rows.append(row_dict)
-
-        except Exception as e:
-            logger.warning(f"Error parsing row {row_idx}: {e}")
-            errors.append(f"Row {row_idx}: {str(e)}")
-            skipped += 1
+    # Convert row dicts to use cleaned headers
+    final_rows = []
+    for row in parsed_rows:
+        final_row = {}
+        for i, orig_header in enumerate(output_headers):
+            if i < len(unique_headers):
+                value = row.get(orig_header, "")
+                final_row[unique_headers[i]] = parse_cell_value(value, unique_headers[i])
+        final_rows.append(final_row)
 
     logger.info(
-        f"Parsed {filename}: {len(parsed_rows)} rows, {skipped} skipped",
+        f"Parsed {filename}: {len(final_rows)} rows, {skipped} skipped, mapped={column_mapped}",
         category=category.name,
-        rows=len(parsed_rows),
+        rows=len(final_rows),
         skipped=skipped,
+        column_mapped=column_mapped,
     )
 
     return ParsedFile(
         filename=filename,
         headers=unique_headers,
-        rows=parsed_rows,
+        rows=final_rows,
         category=category,
         total_rows=len(raw_rows),
         skipped_rows=skipped,
         errors=errors,
+        column_mapped=column_mapped,
+        source_headers=source_headers,
     )
+
+
+def _parse_raw_data(
+    headers: List[str],
+    rows: List[List[Any]],
+    errors: List[str],
+) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """
+    Parse raw data without column mapping (fallback).
+
+    Returns:
+        Tuple of (headers, rows as list of dicts)
+    """
+    parsed_rows = []
+
+    for row_idx, row in enumerate(rows):
+        try:
+            row_dict = {}
+            for col_idx, header in enumerate(headers):
+                if col_idx < len(row):
+                    row_dict[header] = row[col_idx]
+                else:
+                    row_dict[header] = ""
+            parsed_rows.append(row_dict)
+        except Exception as e:
+            errors.append(f"Row {row_idx}: {str(e)}")
+
+    return headers, parsed_rows

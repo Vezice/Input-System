@@ -154,9 +154,9 @@ async def process_file(bucket_name: str, blob_path: str) -> dict:
         logger.error(f"Failed to parse file: {error_msg}", path=blob_path)
         move_to_failed(bucket_name, blob_path)
 
-        # Send failure notification
-        notifier = get_notifier(get_slack_webhook(category_name))
-        await notifier.notify_failure(filename, brand_code, category_name, error_msg)
+        # Send failure notification (disabled for testing)
+        # notifier = get_notifier(get_slack_webhook(category_name))
+        # await notifier.notify_failure(filename, brand_code, category_name, error_msg)
 
         return {"success": False, "error": error_msg}
 
@@ -196,8 +196,8 @@ async def process_file(bucket_name: str, blob_path: str) -> dict:
             logger.error(f"BigQuery upload failed: {error_msg}", path=blob_path)
             move_to_failed(bucket_name, blob_path)
 
-            notifier = get_notifier(get_slack_webhook(category_name))
-            await notifier.notify_failure(filename, brand_code, category_name, error_msg)
+            # notifier = get_notifier(get_slack_webhook(category_name))
+            # await notifier.notify_failure(filename, brand_code, category_name, error_msg)
 
             return {"success": False, "error": error_msg, "import_id": import_id}
 
@@ -212,9 +212,9 @@ async def process_file(bucket_name: str, blob_path: str) -> dict:
 
     duration = time.time() - start_time
 
-    # Send success notification
-    notifier = get_notifier(get_slack_webhook(category_name))
-    await notifier.notify_success(parsed_file, brand_code, import_id, rows_inserted, duration)
+    # Send success notification (disabled for testing)
+    # notifier = get_notifier(get_slack_webhook(category_name))
+    # await notifier.notify_success(parsed_file, brand_code, import_id, rows_inserted, duration)
 
     logger.info(
         f"File processed successfully",

@@ -300,6 +300,53 @@ def sync_type_validation() -> Tuple[bool, int]:
     return True, len(prepared_rows)
 
 
+def sync_unique_column() -> Tuple[bool, int]:
+    """
+    Sync Unique Column sheet from Admin Sheet to BigQuery.
+
+    This sheet contains column alias mappings for handling
+    different column names across file formats.
+
+    Returns:
+        Tuple of (success, rows_synced)
+    """
+    logger.info("Syncing Unique Column from Admin Sheet...")
+
+    rows = _fetch_sheet_data("Unique Column", "A1:J100")
+    if not rows:
+        logger.warning("No data found in Unique Column sheet")
+        return False, 0
+
+    _ensure_dataset_exists()
+
+    # Create schema - all STRING columns using Excel-style naming
+    max_cols = max(len(row) for row in rows) if rows else 10
+    schema = [
+        bigquery.SchemaField(_get_column_name(i), "STRING", mode="NULLABLE")
+        for i in range(max_cols)
+    ]
+
+    table_id = f"{PROJECT_ID}.{CONFIG_DATASET}.unique_column"
+    _drop_and_create_table(table_id, schema)
+
+    # Prepare all rows (including header as Row 1)
+    prepared_rows = []
+    for row in rows:
+        prepared_row = {_get_column_name(i): str(v) if v else "" for i, v in enumerate(row)}
+        prepared_rows.append(prepared_row)
+
+    # Insert rows
+    client = _get_bq_client()
+    errors = client.insert_rows_json(table_id, prepared_rows)
+
+    if errors:
+        logger.error(f"Failed to insert unique column: {errors}")
+        return False, 0
+
+    logger.info(f"Synced {len(prepared_rows)} unique column rows")
+    return True, len(prepared_rows)
+
+
 def sync_all() -> Dict[str, any]:
     """
     Sync all configuration and validation data from Admin Sheet to BigQuery.
@@ -313,6 +360,7 @@ def sync_all() -> Dict[str, any]:
     results = {
         "categories": {"success": False, "rows": 0},
         "type_validation": {"success": False, "rows": 0},
+        "unique_column": {"success": False, "rows": 0},
         "validations": {},
         "total_rows": 0,
         "errors": [],
@@ -326,6 +374,11 @@ def sync_all() -> Dict[str, any]:
     # Sync Type Validation sheet
     success, rows = sync_type_validation()
     results["type_validation"] = {"success": success, "rows": rows}
+    results["total_rows"] += rows
+
+    # Sync Unique Column sheet (column aliases)
+    success, rows = sync_unique_column()
+    results["unique_column"] = {"success": success, "rows": rows}
     results["total_rows"] += rows
 
     # Sync all validation sheets

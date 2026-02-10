@@ -101,7 +101,7 @@ class BigQueryLoader:
         self,
         table_name: str,
         schema: List[bigquery.SchemaField],
-        max_retries: int = 3,
+        max_retries: int = 5,
     ) -> bigquery.Table:
         """Create table if it doesn't exist, or update schema if needed.
 
@@ -139,19 +139,25 @@ class BigQueryLoader:
                     table = self.client.create_table(table)
                     logger.info(f"Created table {table_name} with {len(schema)} columns")
 
-                    # Wait for table to be ready
-                    time.sleep(5)
+                    # Wait for table to be fully propagated
+                    # This is critical for preventing race conditions
+                    time.sleep(8)
 
                     return table
 
                 except Conflict:
                     # Table was created by another concurrent function
-                    # Wait a bit and retry to get the table
-                    logger.info(f"Table {table_name} created by another process, retrying...")
-                    time.sleep(1 + random.random())
+                    # Wait with exponential backoff and retry
+                    wait_time = (2 ** attempt) + random.random()
+                    logger.info(
+                        f"Table {table_name} created by another process, "
+                        f"waiting {wait_time:.1f}s before retry..."
+                    )
+                    time.sleep(wait_time)
                     continue
 
-        # All retries exhausted, try one more get
+        # All retries exhausted, try one more get with a final wait
+        time.sleep(3)
         return self.client.get_table(table_id)
 
     def prepare_rows(
@@ -197,29 +203,82 @@ class BigQueryLoader:
         table_name: str,
         rows: List[Dict[str, Any]],
         batch_size: int = 500,
+        max_retries: int = 5,
     ) -> Tuple[int, List[str]]:
         """
         Insert rows using streaming API.
+
+        Includes retry logic for table not found errors (race condition
+        when multiple functions create table simultaneously).
         """
         table_id = self.get_table_id(table_name)
-        table = self.client.get_table(table_id)
+
+        # Retry loop for getting the table (handles race condition)
+        table = None
+        for attempt in range(max_retries):
+            try:
+                table = self.client.get_table(table_id)
+                break
+            except NotFound:
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) + random.random()
+                    logger.warning(
+                        f"Table {table_name} not found, retrying in {wait_time:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    time.sleep(wait_time)
+                else:
+                    raise
 
         total_inserted = 0
         errors = []
 
-        # Process in batches
+        # Process in batches with retry for streaming API consistency
         for i in range(0, len(rows), batch_size):
             batch = rows[i:i + batch_size]
+            batch_inserted = False
 
-            insert_errors = self.client.insert_rows_json(table, batch)
+            # Retry loop for insert (handles streaming API eventual consistency)
+            for attempt in range(max_retries):
+                try:
+                    insert_errors = self.client.insert_rows_json(table, batch)
 
-            if insert_errors:
-                for error in insert_errors:
-                    error_msg = f"Row {error['index']}: {error['errors']}"
-                    errors.append(error_msg)
-                    logger.warning(f"Insert error: {error_msg}")
-            else:
-                total_inserted += len(batch)
+                    if insert_errors:
+                        # Check if it's a "table not found" error
+                        first_error = str(insert_errors[0].get('errors', ''))
+                        if 'not found' in first_error.lower() and attempt < max_retries - 1:
+                            wait_time = (2 ** attempt) + random.random()
+                            logger.warning(
+                                f"Insert failed (table not ready), retrying in {wait_time:.1f}s "
+                                f"(attempt {attempt + 1}/{max_retries})"
+                            )
+                            time.sleep(wait_time)
+                            # Refresh table reference
+                            table = self.client.get_table(table_id)
+                            continue
+
+                        for error in insert_errors:
+                            error_msg = f"Row {error['index']}: {error['errors']}"
+                            errors.append(error_msg)
+                            logger.warning(f"Insert error: {error_msg}")
+                    else:
+                        total_inserted += len(batch)
+
+                    batch_inserted = True
+                    break
+
+                except NotFound:
+                    if attempt < max_retries - 1:
+                        wait_time = (2 ** attempt) + random.random()
+                        logger.warning(
+                            f"Table not found during insert, retrying in {wait_time:.1f}s "
+                            f"(attempt {attempt + 1}/{max_retries})"
+                        )
+                        time.sleep(wait_time)
+                        # Refresh table reference
+                        table = self.client.get_table(table_id)
+                    else:
+                        raise
 
             logger.debug(f"Inserted batch {i // batch_size + 1}: {len(batch)} rows")
 
