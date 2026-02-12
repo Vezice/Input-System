@@ -2,6 +2,83 @@
 // Worker Management.gs
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// iBot v2 GCS Upload Configuration
+const IBOT_V2_GCS_CONFIG = {
+  ENABLED: true,
+  UPLOAD_ENDPOINT: 'https://asia-southeast2-fbi-dev-484410.cloudfunctions.net/ibot-v2-http/upload',
+};
+
+/**
+ * Uploads all files from the Upload Here folder to GCS for iBot v2 processing.
+ * This runs in parallel with v1 processing - failures here don't block v1.
+ *
+ * @param {string} category The category name (e.g., "BA Produk SHO")
+ * @param {GoogleAppsScript.Drive.Folder} uploadHereFolder The folder containing files to upload
+ * @returns {object} Result with counts of successful and failed uploads
+ */
+function AHA_UploadFilesToGCS3(category, uploadHereFolder) {
+  if (!IBOT_V2_GCS_CONFIG.ENABLED) {
+    Logger.log("GCS upload disabled, skipping...");
+    return { uploaded: 0, failed: 0, skipped: true };
+  }
+
+  const files = uploadHereFolder.getFiles();
+  let uploaded = 0;
+  let failed = 0;
+  const errors = [];
+
+  while (files.hasNext()) {
+    const file = files.next();
+    const filename = file.getName();
+
+    // Skip non-data files
+    if (!filename.match(/\.(xlsx|xls|csv)$/i)) {
+      continue;
+    }
+
+    try {
+      const blob = file.getBlob();
+      const content = Utilities.base64Encode(blob.getBytes());
+
+      const payload = {
+        category: category,
+        filename: filename,
+        content: content
+      };
+
+      const options = {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true
+      };
+
+      const response = UrlFetchApp.fetch(IBOT_V2_GCS_CONFIG.UPLOAD_ENDPOINT, options);
+      const responseCode = response.getResponseCode();
+
+      if (responseCode === 200) {
+        uploaded++;
+        Logger.log(`✅ GCS upload: ${filename}`);
+      } else {
+        failed++;
+        errors.push(`${filename}: ${response.getContentText()}`);
+        Logger.log(`❌ GCS upload failed: ${filename} - ${response.getContentText()}`);
+      }
+    } catch (e) {
+      failed++;
+      errors.push(`${filename}: ${e.message}`);
+      Logger.log(`❌ GCS upload error: ${filename} - ${e.message}`);
+    }
+  }
+
+  Logger.log(`GCS upload complete: ${uploaded} uploaded, ${failed} failed`);
+
+  // Don't send Slack notification for GCS failures - just log them
+  // v1 should continue processing regardless of GCS upload status
+
+  return { uploaded, failed, errors };
+}
+
 /**
  * Checks the 'Upload Here' folder for duplicate filenames.
  * If duplicates are found, sends a Slack alert with details and returns false.
@@ -137,6 +214,18 @@ function AHA_SplitFilesToWorkers3(ss, category) {
     return false; // Halt the import process
   }
   // --- END DUPLICATE CHECK ---
+
+  // --- GCS UPLOAD FOR IBOT V2 ---
+  // Upload files to GCS in parallel with v1 processing.
+  // This allows iBot v2 to process the same files independently.
+  // Failures here don't block v1 processing.
+  try {
+    const gcsResult = AHA_UploadFilesToGCS3(category, uploadHere);
+    Logger.log(`GCS upload: ${gcsResult.uploaded} uploaded, ${gcsResult.failed} failed`);
+  } catch (gcsError) {
+    Logger.log(`GCS upload error (non-blocking): ${gcsError.message}`);
+  }
+  // --- END GCS UPLOAD ---
 
   const workerFolders = {};
   const numWorkers = 3;

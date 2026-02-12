@@ -170,18 +170,28 @@ async def process_file(bucket_name: str, blob_path: str) -> dict:
         return code == code.upper()
 
     if not is_valid_brand_code(brand_code):
+        detected = False
         if is_legacy_detection_enabled():
             # Use v1-style brand detection from product codes
             detected_brand = detect_brand_from_data(parsed_file, category_name)
             if detected_brand:
                 logger.info(f"Using detected brand '{detected_brand}' instead of '{brand_code}'")
                 brand_code = detected_brand
+                detected = True
             else:
                 # Fallback: try to get brand from 'akun' column
                 extracted_brand = extract_brand_from_data(parsed_file)
                 if extracted_brand:
                     logger.info(f"Using extracted brand '{extracted_brand}' instead of '{brand_code}'")
                     brand_code = extracted_brand
+                    detected = True
+
+        # If brand code is still invalid after all detection attempts, fail the file
+        if not detected and not is_valid_brand_code(brand_code):
+            error_msg = f"Could not detect valid brand code. Filename gave '{brand_code}' which is invalid."
+            logger.error(error_msg, path=blob_path)
+            move_to_failed(bucket_name, blob_path)
+            return {"success": False, "error": error_msg}
 
     # Generate import ID
     import_id = f"ibotv2_{category.bigquery_table}_{brand_code}_{uuid.uuid4().hex[:8]}"
@@ -334,11 +344,11 @@ def http_handler(request: Request):
             content = base64.b64decode(content_b64)
 
             # Normalize category name to match config format
-            # e.g., "BA DASH TIK" -> "BA Dash TIK"
-            # Marketplace codes (LAZ, SHO, TIK, TOK, BSL) stay uppercase
-            marketplace_codes = {"LAZ", "SHO", "TIK", "TOK", "BSL"}
+            # e.g., "ba produk laz" -> "BA Produk LAZ"
+            # Keep uppercase: BA, marketplace codes (LAZ, SHO, TIK, TOK, BSL)
+            keep_uppercase = {"BA", "LAZ", "SHO", "TIK", "TOK", "BSL"}
             normalized_category = " ".join(
-                word if word.upper() in marketplace_codes else word.title()
+                word.upper() if word.upper() in keep_uppercase else word.title()
                 for word in category.split()
             )
 

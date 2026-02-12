@@ -372,6 +372,22 @@ class ColumnMapper:
                     )
                     mapping['source_idx'] = idx
 
+                elif rule.action == 'COALESCE_COMBINED':
+                    # Try starts_with matching first (more flexible)
+                    # then fall back to exact matching
+                    idx = apply_coalesce_starts_with(
+                        source_header_map,
+                        working_map,
+                        rule.replacements,
+                    )
+                    if idx is None:
+                        idx = apply_coalesce_exact(
+                            source_header_map,
+                            working_map,
+                            rule.replacements,
+                        )
+                    mapping['source_idx'] = idx
+
                 # SUM_STARTS_WITH is handled per-row, not pre-calculated
 
             mappings.append(mapping)
@@ -442,27 +458,23 @@ def create_mapper_for_category(
             starts_with_aliases = [a[:-1] for a in aliases if a.endswith('*')]
             exact_aliases = [a for a in aliases if not a.endswith('*')]
 
-            if starts_with_aliases:
-                # Check if it looks like a SUM pattern (multiple columns to sum)
-                if any('sum' in standard_col.lower() or 'total' in standard_col.lower()
-                       for _ in [1]):  # Placeholder condition
-                    rules.append(ColumnRule(
-                        standard_column=standard_col,
-                        action='SUM_STARTS_WITH',
-                        replacements=starts_with_aliases,
-                    ))
-                else:
-                    rules.append(ColumnRule(
-                        standard_column=standard_col,
-                        action='COALESCE_STARTS_WITH',
-                        replacements=starts_with_aliases,
-                    ))
+            # Check for SUM patterns (prefixed with SUM:)
+            sum_aliases = [a[4:] for a in aliases if a.startswith('SUM:')]
 
-            if exact_aliases:
+            if sum_aliases:
                 rules.append(ColumnRule(
                     standard_column=standard_col,
-                    action='COALESCE_EXACT',
-                    replacements=exact_aliases,
+                    action='SUM_STARTS_WITH',
+                    replacements=sum_aliases,
+                ))
+            elif starts_with_aliases or exact_aliases:
+                # Combine both starts_with and exact patterns into a single rule
+                # The apply function will try starts_with first, then exact
+                # This prevents the dict from overwriting one rule with another
+                rules.append(ColumnRule(
+                    standard_column=standard_col,
+                    action='COALESCE_COMBINED',
+                    replacements=starts_with_aliases + exact_aliases,
                 ))
 
     # Determine if this category should include dynamic headers
