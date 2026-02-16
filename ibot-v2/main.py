@@ -38,9 +38,11 @@ def extract_info_from_path(blob_path: str) -> tuple[Optional[str], Optional[str]
     """
     Extract category, brand code, and filename from GCS blob path.
 
-    Expected format: {CATEGORY}/{BRAND} filename.xlsx
-    Example: BA Produk LAZ/GS 2024-01-15_data.xlsx
-             -> category="BA Produk LAZ", brand="GS", filename="GS 2024-01-15_data.xlsx"
+    Expected formats:
+    - BA Produk: {CATEGORY}/{BRAND} filename.xlsx
+      Example: BA Produk LAZ/GS 2024-01-15_data.xlsx -> brand="GS"
+    - BA Dash: {CATEGORY}/{MARKETPLACE} {BRAND} Overview_...xlsx
+      Example: BA Dash TIK/TIK GS Overview_My Business Performance_....xlsx -> brand="GS"
 
     Returns:
         Tuple of (category_name, brand_code, filename)
@@ -56,9 +58,21 @@ def extract_info_from_path(blob_path: str) -> tuple[Optional[str], Optional[str]
     category_name = parts[0]
     filename = parts[-1]
 
-    # Extract brand code from filename (first word before space)
-    brand_code = filename.split(" ")[0] if " " in filename else filename.split("_")[0]
-    # Clean up brand code (remove extension if no space)
+    # Extract brand code from filename
+    words = filename.split(" ")
+
+    if category_name.startswith("BA Dash") and len(words) >= 2:
+        # BA Dash files: "{MARKETPLACE} {BRAND} Overview_..."
+        # Brand is the second word (e.g., "TIK GS Overview..." -> "GS")
+        brand_code = words[1]
+    elif len(words) >= 1:
+        # BA Produk files: "{BRAND} filename.xlsx"
+        # Brand is the first word
+        brand_code = words[0]
+    else:
+        brand_code = filename.split("_")[0]
+
+    # Clean up brand code (remove extension if present)
     if "." in brand_code:
         brand_code = Path(brand_code).stem
 
