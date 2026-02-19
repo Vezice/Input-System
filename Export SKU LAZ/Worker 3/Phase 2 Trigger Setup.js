@@ -435,9 +435,15 @@ function AHA_StartCleanupProcess() {
  * Replaces the first part of the old AHA_RemoveAllTriggers2
  */
 function AHA_RunFinalization() {
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_MS = 10000; // 10 seconds between retries
+  const properties = PropertiesService.getScriptProperties();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const inputSheet = ss.getSheetByName("Input");
-  
+
+  // Track retry count across executions
+  let retryCount = Number(properties.getProperty("FINALIZATION_RETRY_COUNT") || 0);
+
   try {
     if (CONFIG.CATEGORY_IMPORTING_ENABLED) {
       AHA_FinalizeAllTempSheets2();
@@ -446,21 +452,48 @@ function AHA_RunFinalization() {
       const categoriesRange = inputSheet.getRange("E5:E" + inputSheet.getLastRow()).getValues();
       const allCategories = [...new Set(categoriesRange.flat().filter(Boolean))];
       allCategories.forEach(category => {
-        try { AHA_FinalizeSheetSwap2(category); } 
+        try { AHA_FinalizeSheetSwap2(category); }
         catch (e) { Logger.log(`❌ Failed to finalize sheet swap for category ${category}: ${e.message}`); }
       });
     }
 
     // Success: Set status and trigger next step
-    PropertiesService.getScriptProperties().setProperty('SYSTEM_STATUS', 'ARCHIVING');
+    properties.setProperty('SYSTEM_STATUS', 'ARCHIVING');
+    properties.deleteProperty('FINALIZATION_RETRY_COUNT'); // Clear retry counter on success
     ScriptApp.newTrigger("AHA_RunArchiving")
       .timeBased()
       .after(10 * 1000)
       .create();
 
   } catch (e) {
-    AHA_SlackNotify3(`❌ *Error*: Cleanup Step 'Finalization' failed: ${e.message} <@U0A6B24777X>`);
-    // Do not proceed. The watchdog will restart this step.
+    const errorMsg = e.message || String(e);
+
+    // Check if this is a transient error that we should retry
+    const isTransientError = errorMsg.includes("Service error") ||
+                             errorMsg.includes("Drive") ||
+                             errorMsg.includes("Sheets") ||
+                             errorMsg.includes("temporarily unavailable") ||
+                             errorMsg.includes("server error") ||
+                             errorMsg.includes("timed out");
+
+    if (isTransientError && retryCount < MAX_RETRIES) {
+      retryCount++;
+      properties.setProperty("FINALIZATION_RETRY_COUNT", String(retryCount));
+
+      Logger.log(`⚠️ Finalization failed with transient error. Scheduling retry ${retryCount}/${MAX_RETRIES}...`);
+      AHA_SlackNotify3(`⚠️ *Finalization* hit a transient error: "${errorMsg}". Retrying (${retryCount}/${MAX_RETRIES})...`);
+
+      // Schedule a retry after delay
+      ScriptApp.newTrigger('AHA_RunFinalization')
+        .timeBased()
+        .after(RETRY_DELAY_MS)
+        .create();
+    } else {
+      // Max retries exceeded or non-transient error
+      properties.deleteProperty('FINALIZATION_RETRY_COUNT');
+      AHA_SlackNotify3(`❌ *Error*: Cleanup Step 'Finalization' failed: ${errorMsg} <@U0A6B24777X>`);
+      // Do not proceed. The watchdog will restart this step if needed.
+    }
   }
 }
 
@@ -470,9 +503,16 @@ function AHA_RunFinalization() {
  * * -- MODIFIED to include a final "goodbye" message --
  */
 function AHA_RunArchiving() {
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_MS = 10000; // 10 seconds between retries
+  const properties = PropertiesService.getScriptProperties();
+
+  // Track retry count across executions (in case of timeout)
+  let retryCount = Number(properties.getProperty("ARCHIVING_RETRY_COUNT") || 0);
+
   try {
     // --- MODIFICATION ---
-    PropertiesService.getScriptProperties().setProperty('SYSTEM_STATUS', 'CLEANUP');
+    properties.setProperty('SYSTEM_STATUS', 'CLEANUP');
 
     AHA_SlackNotify3("⚠️ *Archiving Files...*");
     AHA_ArchiveFilesByCategory2();
@@ -497,7 +537,8 @@ function AHA_RunArchiving() {
 
     // --- FINAL RESET ---
     // 1. Delete the status property to signal "OFFLINE"
-    PropertiesService.getScriptProperties().deleteProperty('SYSTEM_STATUS');
+    properties.deleteProperty('SYSTEM_STATUS');
+    properties.deleteProperty('ARCHIVING_RETRY_COUNT'); // Clear retry counter on success
     Logger.log("SYSTEM_STATUS property deleted. Worker is now OFFLINE.");
 
     // 2. Delete the Watchdog trigger
@@ -505,7 +546,32 @@ function AHA_RunArchiving() {
     Logger.log("Watchdog trigger deleted. Worker process complete.");
 
   } catch (e) {
-    AHA_SlackNotify3(`❌ *Error*: Cleanup Step 'Archiving' failed: ${e.message} <@U0A6B24777X>`);
+    const errorMsg = e.message || String(e);
+
+    // Check if this is a transient Drive/Service error that we should retry
+    const isTransientError = errorMsg.includes("Service error") ||
+                             errorMsg.includes("Drive") ||
+                             errorMsg.includes("temporarily unavailable") ||
+                             errorMsg.includes("server error") ||
+                             errorMsg.includes("timed out");
+
+    if (isTransientError && retryCount < MAX_RETRIES) {
+      retryCount++;
+      properties.setProperty("ARCHIVING_RETRY_COUNT", String(retryCount));
+
+      Logger.log(`⚠️ Archiving failed with transient error. Scheduling retry ${retryCount}/${MAX_RETRIES}...`);
+      AHA_SlackNotify3(`⚠️ *Archiving* hit a transient error: "${errorMsg}". Retrying (${retryCount}/${MAX_RETRIES})...`);
+
+      // Schedule a retry after delay
+      ScriptApp.newTrigger('AHA_RunArchiving')
+        .timeBased()
+        .after(RETRY_DELAY_MS)
+        .create();
+    } else {
+      // Max retries exceeded or non-transient error
+      properties.deleteProperty('ARCHIVING_RETRY_COUNT');
+      AHA_SlackNotify3(`❌ *Error*: Cleanup Step 'Archiving' failed: ${errorMsg} <@U0A6B24777X>`);
+    }
   }
 }
 

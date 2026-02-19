@@ -567,7 +567,8 @@ function AHA_ProcessSingleRowReport(data, targetSheet, logSheet, folderName, dat
     if (!sourceRow || !sourceRow.some(cell => (cell || "").toString().trim() !== "")) return false;
 
     const transformedRow = [];
-    const sourceHeaderList = Array.from(sourceHeaderMap.keys()); 
+    const sourceHeaderList = Array.from(sourceHeaderMap.keys());
+    const unmappedColumns = [];
 
     for (const standardHeader of standardHeaders) {
         const standardHeaderLower = standardHeader.toLowerCase().trim();
@@ -580,7 +581,7 @@ function AHA_ProcessSingleRowReport(data, targetSheet, logSheet, folderName, dat
             const idx = sourceHeaderMap.get(standardHeaderLower)[0];
             value = sourceRow[idx];
             found = true;
-        } 
+        }
         // Check 2: Special rules
         else if (specialRules[standardHeader]) {
             const rule = specialRules[standardHeader];
@@ -611,7 +612,17 @@ function AHA_ProcessSingleRowReport(data, targetSheet, logSheet, folderName, dat
                 }
             }
         }
+
+        if (!found) {
+            unmappedColumns.push(standardHeader);
+        }
         transformedRow.push(value);
+    }
+
+    // Debug: Log unmapped columns
+    if (unmappedColumns.length > 0) {
+        Logger.log(`[SingleRowReport] ${folderName}: Unmapped columns: ${unmappedColumns.join(', ')}`);
+        Logger.log(`[SingleRowReport] ${folderName}: Source headers available: ${sourceHeaderList.join(', ')}`);
     }
 
     if (typeof transformedRow[0] === 'string' && transformedRow[0].length > 10) {
@@ -644,14 +655,17 @@ function AHA_ProcessBADashSHOFile(data, targetSheet, logSheet, folderName, dataR
     const sourceHeaderList = Array.from(sourceHeaderMap.keys()); 
 
     // 1. Standard Data Mapping
+    const unmappedColumns = [];
     for (const standardHeader of standardHeaders) {
         const standardHeaderLower = standardHeader.toLowerCase().trim();
         let value = '';
+        let mapped = false;
 
         if (sourceHeaderMap.has(standardHeaderLower)) {
             const idx = sourceHeaderMap.get(standardHeaderLower)[0];
             value = sourceRow[idx];
-        } 
+            mapped = true;
+        }
         else if (specialRules[standardHeader]) {
             const rule = specialRules[standardHeader];
             const action = rule.action;
@@ -662,6 +676,7 @@ function AHA_ProcessBADashSHOFile(data, targetSheet, logSheet, folderName, dataR
                 if (matchingHeaders.length > 0) {
                     const idx = sourceHeaderMap.get(matchingHeaders[0])[0];
                     value = sourceRow[idx];
+                    mapped = true;
                 }
             }
             else if (action === "COALESCE_EXACT") {
@@ -671,12 +686,23 @@ function AHA_ProcessBADashSHOFile(data, targetSheet, logSheet, folderName, dataR
                     if (sourceHeaderMap.has(colNameLower)) {
                         const idx = sourceHeaderMap.get(colNameLower)[0];
                         value = sourceRow[idx];
+                        mapped = true;
                         break;
                     }
                 }
             }
         }
+
+        if (!mapped) {
+            unmappedColumns.push(standardHeader);
+        }
         transformedRow.push(value);
+    }
+
+    // Debug: Log unmapped columns
+    if (unmappedColumns.length > 0) {
+        Logger.log(`[BA Dash SHO] ${folderName}: Unmapped columns: ${unmappedColumns.join(', ')}`);
+        Logger.log(`[BA Dash SHO] ${folderName}: Source headers available: ${sourceHeaderList.join(', ')}`);
     }
 
     // 2. Specific Date Formatting for SHO
@@ -746,15 +772,18 @@ function AHA_ProcessBADashTIKTOKFile(data, targetSheet, logSheet, folderName, da
 
     const transformedRow = [];
     const sourceHeaderList = Array.from(sourceHeaderMap.keys());
+    const unmappedColumns = [];
 
     for (const standardHeader of standardHeaders) {
       const standardHeaderLower = standardHeader.toLowerCase().trim();
       let value = '';
+      let mapped = false;
 
       // Check 1: Simple 1-to-1 match
       if (sourceHeaderMap.has(standardHeaderLower)) {
         const idx = sourceHeaderMap.get(standardHeaderLower)[0];
         value = sourceRow[idx];
+        mapped = true;
       }
       // Check 2: Special rules
       else if (specialRules[standardHeader]) {
@@ -767,6 +796,7 @@ function AHA_ProcessBADashTIKTOKFile(data, targetSheet, logSheet, folderName, da
           if (matchingHeaders.length > 0) {
             const idx = sourceHeaderMap.get(matchingHeaders[0])[0];
             value = sourceRow[idx];
+            mapped = true;
           }
         }
         else if (action === "COALESCE_EXACT") {
@@ -776,12 +806,23 @@ function AHA_ProcessBADashTIKTOKFile(data, targetSheet, logSheet, folderName, da
             if (sourceHeaderMap.has(colNameLower)) {
               const idx = sourceHeaderMap.get(colNameLower)[0];
               value = sourceRow[idx];
+              mapped = true;
               break;
             }
           }
         }
       }
+
+      if (!mapped) {
+        unmappedColumns.push(standardHeader);
+      }
       transformedRow.push(value);
+    }
+
+    // Debug: Log unmapped columns
+    if (unmappedColumns.length > 0) {
+      Logger.log(`[BA Dash TIK/TOK] ${folderName}: Unmapped columns: ${unmappedColumns.join(', ')}`);
+      Logger.log(`[BA Dash TIK/TOK] ${folderName}: Source headers available: ${sourceHeaderList.join(', ')}`);
     }
 
     // Override the first column (date) with value from the date row
@@ -823,6 +864,7 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
 
         const transformedRow = [];
         const sourceHeaderList = Array.from(sourceHeaderMap.keys());
+        const unmappedColumns = [];
 
         // 1. Map data based on standard headers
         for (const standardHeader of standardHeaders) {
@@ -860,7 +902,17 @@ function AHA_ProcessBADashLAZFile(data, targetSheet, logSheet, folderName, dataR
                     }
                 }
             }
+
+            if (!found) {
+                unmappedColumns.push(standardHeader);
+            }
             transformedRow.push(value);
+        }
+
+        // Debug: Log unmapped columns
+        if (unmappedColumns.length > 0) {
+            Logger.log(`[BA Dash LAZ] ${folderName}: Unmapped columns: ${unmappedColumns.join(', ')}`);
+            Logger.log(`[BA Dash LAZ] ${folderName}: Source headers available: ${sourceHeaderList.join(', ')}`);
         }
 
         // 2. Apply special formatting logic
