@@ -28,7 +28,7 @@ from parser import parse_file
 from bigquery_loader import get_loader
 from slack_notifier import get_notifier
 from brand_detector import detect_brand_from_data, is_legacy_detection_enabled
-from utils.gcs_utils import download_blob_as_bytes, move_to_archive, move_to_failed, upload_blob
+from utils.gcs_utils import download_blob_as_bytes, list_blobs_in_folder, move_to_archive, move_to_failed, upload_blob
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -268,6 +268,170 @@ def run_async(coro):
     return loop.run_until_complete(coro)
 
 
+# Categories that use batch processing (triggered by v1 when all files are ready)
+# These are snapshot categories where we replace entire table
+BATCH_CATEGORIES = ["BA Produk", "Informasi", "Export SKU", "Demografis", "Proyeksi"]
+
+
+async def batch_process_category(category_name: str) -> dict:
+    """
+    Process all files in a category folder at once.
+
+    Called by v1 (Apps Script) when all workers complete.
+    This ensures v1 and v2 process the same data at the same time.
+
+    Args:
+        category_name: Category name (e.g., "BA Produk SHO")
+
+    Returns:
+        Result dict with success status and details
+    """
+    start_time = time.time()
+    bucket_name = settings.IMPORT_BUCKET
+
+    logger.info(f"Batch processing started", category=category_name)
+
+    # 1. Get category config
+    category = get_category(category_name)
+    if not category:
+        logger.error(f"Unknown category: {category_name}")
+        return {"success": False, "error": f"Unknown category: {category_name}"}
+
+    # 2. List all files in category folder
+    blob_paths = list_blobs_in_folder(bucket_name, category_name)
+
+    if not blob_paths:
+        logger.info(f"No files to process in {category_name}")
+        return {
+            "success": True,
+            "message": "No files to process",
+            "category": category_name,
+            "files_processed": 0,
+            "rows_inserted": 0,
+        }
+
+    logger.info(f"Found {len(blob_paths)} files to process", category=category_name)
+
+    # 3. Parse all files and accumulate rows
+    all_rows = []
+    all_headers = None
+    processed_files = []
+    failed_files = []
+
+    for blob_path in blob_paths:
+        filename = blob_path.split("/")[-1]
+
+        # Download file
+        file_content = download_blob_as_bytes(bucket_name, blob_path)
+        if not file_content:
+            logger.error(f"Failed to download: {blob_path}")
+            failed_files.append({"path": blob_path, "error": "Download failed"})
+            move_to_failed(bucket_name, blob_path)
+            continue
+
+        # Parse file
+        parsed = parse_file(filename, file_content, category)
+        if not parsed.is_valid:
+            error_msg = parsed.errors[0] if parsed.errors else "Parse failed"
+            logger.error(f"Failed to parse: {blob_path} - {error_msg}")
+            failed_files.append({"path": blob_path, "error": error_msg})
+            move_to_failed(bucket_name, blob_path)
+            continue
+
+        # Extract brand code
+        _, brand_code, _ = extract_info_from_path(blob_path)
+
+        # Validate brand code
+        def is_valid_brand_code(code: str) -> bool:
+            if not code:
+                return False
+            return code == code.upper()
+
+        if not is_valid_brand_code(brand_code):
+            # Try to detect from content
+            if is_legacy_detection_enabled():
+                detected_brand = detect_brand_from_data(parsed, category_name)
+                if detected_brand:
+                    brand_code = detected_brand
+                else:
+                    extracted_brand = extract_brand_from_data(parsed)
+                    if extracted_brand:
+                        brand_code = extracted_brand
+
+            if not is_valid_brand_code(brand_code):
+                error_msg = f"Invalid brand code: {brand_code}"
+                logger.error(f"{error_msg} for {blob_path}")
+                failed_files.append({"path": blob_path, "error": error_msg})
+                move_to_failed(bucket_name, blob_path)
+                continue
+
+        # Add brand code to each row and accumulate
+        for row in parsed.rows:
+            row["_brand_code"] = brand_code
+        all_rows.extend(parsed.rows)
+
+        # Use headers from first successful file
+        if all_headers is None:
+            all_headers = parsed.headers
+
+        processed_files.append(blob_path)
+        logger.info(f"Parsed {filename}: {len(parsed.rows)} rows, brand={brand_code}")
+
+    if not all_rows:
+        logger.warning(f"No valid data found in any files for {category_name}")
+        return {
+            "success": False,
+            "error": "No valid data in any files",
+            "category": category_name,
+            "files_processed": 0,
+            "files_failed": len(failed_files),
+        }
+
+    # 4. Delete entire table data (except header row)
+    loader = get_loader()
+    deleted = loader.delete_all_data(category.bigquery_table)
+    logger.info(f"Deleted {deleted} existing rows from {category.bigquery_table}")
+
+    # 5. Insert all rows using batch upload
+    success, result = loader.batch_upload(all_rows, all_headers, category)
+
+    if not success:
+        error_msg = result.get("error", "Batch upload failed")
+        logger.error(f"Batch upload failed: {error_msg}")
+        # Move all processed files to failed
+        for blob_path in processed_files:
+            move_to_failed(bucket_name, blob_path)
+        return {
+            "success": False,
+            "error": error_msg,
+            "category": category_name,
+        }
+
+    # 6. Archive all processed files
+    for blob_path in processed_files:
+        move_to_archive(bucket_name, blob_path)
+
+    duration = time.time() - start_time
+    rows_inserted = result.get("rows_inserted", 0)
+
+    logger.info(
+        f"Batch processing complete",
+        category=category_name,
+        files=len(processed_files),
+        rows=rows_inserted,
+        duration=f"{duration:.1f}s",
+    )
+
+    return {
+        "success": True,
+        "category": category_name,
+        "files_processed": len(processed_files),
+        "files_failed": len(failed_files),
+        "rows_inserted": rows_inserted,
+        "duration_seconds": round(duration, 1),
+    }
+
+
 # ============================================================
 # Cloud Function Entry Points
 # ============================================================
@@ -301,7 +465,17 @@ def process_import(cloud_event: CloudEvent) -> None:
         logger.debug(f"Skipping file in special folder: {blob_path}")
         return
 
-    # Process the file
+    # Skip batch categories - they use /batch-process endpoint triggered by v1
+    category_name = blob_path.split("/")[0] if "/" in blob_path else None
+    if category_name and any(cat in category_name for cat in BATCH_CATEGORIES):
+        logger.info(
+            f"Skipping GCS trigger for batch category (will be processed via /batch-process)",
+            category=category_name,
+            path=blob_path,
+        )
+        return
+
+    # Process the file (only for non-batch categories like BA Dash)
     result = run_async(process_file(bucket_name, blob_path))
 
     logger.info(f"Processing complete", result=result)
@@ -411,6 +585,32 @@ def http_handler(request: Request):
 
         except Exception as e:
             logger.error(f"Sync failed: {e}", exc_info=True)
+            return jsonify({"error": str(e)}), 500
+
+    if path == "/batch-process" and request.method == "POST":
+        # Batch process all files in a category (called by v1 when all workers complete)
+        data = request.get_json(silent=True) or {}
+        category_name = data.get("category")
+
+        if not category_name:
+            return jsonify({"error": "Missing 'category' in request body"}), 400
+
+        try:
+            result = run_async(batch_process_category(category_name))
+            status_code = 200 if result.get("success") else 500
+
+            logger.info(
+                "Batch process completed",
+                category=category_name,
+                success=result.get("success"),
+                files=result.get("files_processed"),
+                rows=result.get("rows_inserted"),
+            )
+
+            return jsonify(result), status_code
+
+        except Exception as e:
+            logger.error(f"Batch process failed: {e}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     return jsonify({"error": "Not found"}), 404

@@ -2,7 +2,11 @@
 iBot v2 BigQuery Loader
 
 Handles uploading parsed data to BigQuery.
-Uses streaming inserts for real-time data loading.
+
+Insert methods:
+- Snapshot categories (BA Produk, etc.): Uses load jobs which write directly
+  to table storage. This allows DELETE to see the data immediately.
+- Append-only categories (BA Dash): Uses streaming inserts for speed.
 
 Column naming: Excel-style (A, B, C, ... Z, AA, AB, etc.)
 Row 1 contains original headers for reference.
@@ -290,6 +294,67 @@ class BigQueryLoader:
 
         return total_inserted, errors
 
+    def load_job_insert(
+        self,
+        table_name: str,
+        rows: List[Dict[str, Any]],
+        schema: List[bigquery.SchemaField],
+    ) -> Tuple[int, List[str]]:
+        """
+        Insert rows using BigQuery load job (not streaming).
+
+        Load jobs write directly to table storage, NOT the streaming buffer.
+        This means DML (DELETE/UPDATE) can see the data immediately.
+        Better for batch operations like BA Produk daily snapshots.
+
+        Args:
+            table_name: Target table name
+            rows: List of row dicts to insert
+            schema: Table schema
+
+        Returns:
+            Tuple of (rows_inserted, errors)
+        """
+        import json
+        import io
+
+        table_id = self.get_table_id(table_name)
+
+        # Convert rows to newline-delimited JSON
+        json_data = "\n".join(json.dumps(row) for row in rows)
+        json_bytes = json_data.encode("utf-8")
+        json_file = io.BytesIO(json_bytes)
+
+        # Configure load job
+        job_config = bigquery.LoadJobConfig(
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+            schema=schema,
+            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        )
+
+        try:
+            load_job = self.client.load_table_from_file(
+                json_file,
+                table_id,
+                job_config=job_config,
+            )
+
+            # Wait for job to complete
+            load_job.result()
+
+            logger.info(
+                f"Load job complete: {load_job.output_rows} rows inserted",
+                table=table_name,
+                job_id=load_job.job_id,
+            )
+
+            return load_job.output_rows or len(rows), []
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Load job failed: {error_msg}", table=table_name)
+            return 0, [error_msg]
+
     def delete_brand_data(
         self,
         brand_code: str,
@@ -359,6 +424,44 @@ class BigQueryLoader:
         # All retries exhausted
         logger.error(f"Failed to delete brand data after {max_retries} retries: {last_error}")
         return 0
+
+    def delete_all_data(self, table_name: str) -> int:
+        """
+        Delete all data rows from a table (keeps header row).
+
+        Used for batch processing where entire table is replaced.
+
+        Args:
+            table_name: Table name
+
+        Returns:
+            Number of rows deleted
+        """
+        table_id = self.get_table_id(table_name)
+
+        query = f"""
+        DELETE FROM `{table_id}`
+        WHERE _brand_code != '_header_'
+        """
+
+        try:
+            query_job = self.client.query(query)
+            query_job.result()
+
+            rows_deleted = query_job.num_dml_affected_rows
+            logger.info(
+                f"Deleted all data: {rows_deleted} rows from {table_name}",
+                table=table_name,
+            )
+            return rows_deleted
+
+        except NotFound:
+            logger.debug(f"Table {table_name} not found, nothing to delete")
+            return 0
+
+        except Exception as e:
+            logger.warning(f"Failed to delete all data: {e}")
+            return 0
 
     def header_row_exists(self, table_name: str) -> bool:
         """Check if header row already exists in the table."""
@@ -439,12 +542,26 @@ class BigQueryLoader:
 
             rows_to_insert.extend(data_rows)
 
-            # Upload using streaming insert
-            rows_inserted, errors = self.streaming_insert(
-                category.bigquery_table,
-                rows_to_insert,
-                batch_size=settings.BATCH_SIZE,
-            )
+            # Choose insert method based on category type
+            # - Snapshot categories: Use load jobs (writes to table storage, not buffer)
+            #   This fixes the duplicate issue where DELETE can't see streaming buffer data
+            # - Append-only categories: Use streaming insert (faster for real-time)
+            if is_snapshot:
+                logger.info(
+                    f"Using load job for snapshot category (avoids streaming buffer)",
+                    category=category.name,
+                )
+                rows_inserted, errors = self.load_job_insert(
+                    category.bigquery_table,
+                    rows_to_insert,
+                    schema,
+                )
+            else:
+                rows_inserted, errors = self.streaming_insert(
+                    category.bigquery_table,
+                    rows_to_insert,
+                    batch_size=settings.BATCH_SIZE,
+                )
 
             return len(errors) == 0, {
                 "import_id": import_id,
@@ -460,6 +577,83 @@ class BigQueryLoader:
                 "import_id": import_id,
                 "error": str(e),
             }
+
+    def batch_upload(
+        self,
+        rows: List[Dict[str, Any]],
+        headers: List[str],
+        category,
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """
+        Upload multiple files' worth of data in a single batch.
+
+        Used by /batch-process endpoint. Assumes:
+        - Table data has already been deleted
+        - Each row already has _brand_code set
+        - Headers are consistent across all files
+
+        Args:
+            rows: List of row dicts (with _brand_code already set)
+            headers: Column headers
+            category: Category config
+
+        Returns:
+            Tuple of (success, result_info)
+        """
+        if not rows:
+            return True, {"rows_inserted": 0, "message": "No rows to insert"}
+
+        logger.info(
+            f"Batch uploading to BigQuery",
+            table=category.bigquery_table,
+            rows=len(rows),
+            columns=len(headers),
+        )
+
+        try:
+            # Ensure dataset and table exist
+            self.ensure_dataset_exists()
+            schema = self.get_schema(len(headers))
+            self.ensure_table_exists(category.bigquery_table, schema)
+
+            # Prepare rows with Excel-style column names
+            prepared_rows = []
+
+            # Add header row if needed
+            if not self.header_row_exists(category.bigquery_table):
+                header_row = {"_brand_code": "_header_"}
+                for i, header in enumerate(headers):
+                    col_name = get_column_name(i)
+                    header_row[col_name] = str(header) if header else ""
+                prepared_rows.append(header_row)
+                logger.info("Including header row in batch")
+
+            # Convert data rows to Excel-style columns
+            for row in rows:
+                prepared_row = {"_brand_code": row.get("_brand_code", "")}
+                for i, header in enumerate(headers):
+                    col_name = get_column_name(i)
+                    value = row.get(header, "")
+                    prepared_row[col_name] = str(value) if value is not None else ""
+                prepared_rows.append(prepared_row)
+
+            # Insert using load job
+            rows_inserted, errors = self.load_job_insert(
+                category.bigquery_table,
+                prepared_rows,
+                schema,
+            )
+
+            return len(errors) == 0, {
+                "table": category.bigquery_table,
+                "rows_inserted": rows_inserted,
+                "rows_total": len(prepared_rows),
+                "errors": errors,
+            }
+
+        except Exception as e:
+            logger.error(f"Batch upload failed: {e}", exc_info=True)
+            return False, {"error": str(e)}
 
 
 # Module-level convenience instance

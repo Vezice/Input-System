@@ -258,7 +258,11 @@ function AHA_HandleWorkerNotification(e) {
   }
 
   if (allWorkersDoneForCategory) {
-    Logger.log(`All workers for category '${category}' are done. Checking merge type.`);
+    Logger.log(`All workers for category '${category}' are done. Triggering v2 batch process.`);
+
+    // Trigger ibot-v2 batch processing (runs in parallel with v1 merge)
+    AHA_TriggerV2BatchProcess(category);
+
     const properties = PropertiesService.getScriptProperties();
     properties.setProperties({
       'merge_category': category,
@@ -1164,8 +1168,40 @@ function AHA_ValidateBADashCategory3(category, marketplaceCode, adminSheetId) {
 }
 
 
+/**
+ * Triggers ibot-v2 batch processing for a category.
+ * Called when all workers complete for that category.
+ * v2 processes all files in GCS and replaces the entire table.
+ *
+ * @param {string} category - The category name (e.g., "BA Produk SHO")
+ */
+function AHA_TriggerV2BatchProcess(category) {
+  const V2_ENDPOINT = "https://asia-southeast2-fbi-dev-484410.cloudfunctions.net/ibot-v2-http/batch-process";
 
+  try {
+    const response = UrlFetchApp.fetch(V2_ENDPOINT, {
+      method: "POST",
+      contentType: "application/json",
+      payload: JSON.stringify({ category: category }),
+      muteHttpExceptions: true
+    });
 
+    const status = response.getResponseCode();
+    const body = response.getContentText();
+
+    if (status === 200) {
+      const result = JSON.parse(body);
+      Logger.log(`✅ v2 batch-process success: ${result.files_processed} files, ${result.rows_inserted} rows`);
+      AHA_SlackNotify3(`📦 *iBot v2*: Processed ${result.files_processed} files for *${category}* (${result.rows_inserted} rows)`);
+    } else {
+      Logger.log(`⚠️ v2 batch-process returned ${status}: ${body}`);
+      AHA_SlackNotify3(`⚠️ *iBot v2*: batch-process returned ${status} for *${category}*`);
+    }
+  } catch (e) {
+    Logger.log(`⚠️ v2 batch-process error: ${e.message}`);
+    // Don't block v1 - v2 is supplementary
+  }
+}
 
 
 
