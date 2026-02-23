@@ -249,17 +249,35 @@ def read_xlsx_file(
     Read Excel .xlsx file and return headers and rows.
     """
     if not EXCEL_SUPPORT:
+        logger.error("openpyxl library not installed. Cannot read .xlsx files.", failure_reason="MISSING_DEPENDENCY")
         raise ImportError("openpyxl is required for Excel support")
 
     # Try loading the workbook, with fallback to fix malformed XML from Shopee exports
     try:
         workbook = openpyxl.load_workbook(io.BytesIO(file_content), data_only=True)
     except Exception as e:
-        if "read worksheets" in str(e) or "invalid xml" in str(e).lower():
-            logger.warning(f"Fixing XLSX pane XML and retrying: {e}")
+        error_str = str(e).lower()
+        if "read worksheets" in error_str or "invalid xml" in error_str:
+            logger.warning(f"XLSX has malformed pane XML (common in Shopee exports), fixing and retrying: {e}")
             fixed_content = _fix_xlsx_pane_xml(file_content)
             workbook = openpyxl.load_workbook(io.BytesIO(fixed_content), data_only=True)
+        elif "stylesheet" in error_str:
+            logger.error(
+                f"XLSX has missing/corrupt stylesheet XML. "
+                f"This is common in TikTok exports where styles.xml is malformed. "
+                f"openpyxl cannot read the workbook. Error: {e}",
+                failure_reason="XLSX_MISSING_STYLESHEET",
+                error_detail=str(e),
+            )
+            raise
         else:
+            logger.error(
+                f"openpyxl failed to open XLSX file. Error: {e}. "
+                f"The file may be corrupted, password-protected, or not a real XLSX "
+                f"(e.g., an HTML/JSON file saved with .xlsx extension).",
+                failure_reason="XLSX_OPEN_FAILED",
+                error_detail=str(e),
+            )
             raise
 
     if sheet_name:
@@ -296,6 +314,7 @@ def read_xls_file(
     Read legacy Excel .xls file and return headers and rows.
     """
     if not XLS_SUPPORT:
+        logger.error("xlrd library not installed. Cannot read legacy .xls files.", failure_reason="MISSING_DEPENDENCY")
         raise ImportError("xlrd is required for .xls support")
 
     workbook = xlrd.open_workbook(file_contents=file_content)
@@ -371,7 +390,42 @@ def parse_file(
                     raise ValueError(f"Unsupported file format: {filename}") from e
 
     except Exception as e:
-        logger.error(f"Error reading file {filename}: {e}")
+        # Determine specific error category for detailed logging
+        error_str = str(e).lower()
+        if "stylesheet" in error_str:
+            explanation = (
+                "The XLSX file has a missing or corrupt stylesheet (styles.xml). "
+                "This is common in TikTok-exported XLSX files. "
+                "The file cannot be processed by openpyxl without a valid stylesheet."
+            )
+        elif "read workbook" in error_str or "read worksheets" in error_str:
+            explanation = (
+                "openpyxl cannot read the workbook structure. "
+                "The XLSX XML may be malformed (common in marketplace exports)."
+            )
+        elif "codec" in error_str or "decode" in error_str or "encoding" in error_str:
+            explanation = (
+                "The file has an unrecognized character encoding. "
+                "Tried UTF-8, UTF-8-BOM, Latin-1, and CP1252 without success."
+            )
+        elif "unsupported" in error_str:
+            explanation = (
+                "The file format is not recognized as Excel or CSV. "
+                "It may be an HTML page, JSON response, or other non-tabular file saved with wrong extension."
+            )
+        else:
+            explanation = f"Unexpected error while reading the file: {e}"
+
+        logger.error(
+            f"PARSE ERROR for {filename}: {explanation}",
+            failure_reason="FILE_READ_ERROR",
+            filename=filename,
+            category=category.name,
+            file_extension=filename_lower.rsplit(".", 1)[-1] if "." in filename_lower else "unknown",
+            error_detail=str(e),
+            header_row=category.header_row,
+            data_start_row=category.data_start_row,
+        )
         return ParsedFile(
             filename=filename,
             headers=[],
@@ -382,7 +436,15 @@ def parse_file(
         )
 
     if not headers:
-        logger.error(f"No headers found in file: {filename}")
+        logger.error(
+            f"PARSE ERROR for {filename}: No headers found. "
+            f"The file appears to be empty or the header row index ({category.header_row}) "
+            f"is beyond the number of rows in the file.",
+            failure_reason="NO_HEADERS",
+            filename=filename,
+            category=category.name,
+            header_row_config=category.header_row,
+        )
         return ParsedFile(
             filename=filename,
             headers=[],

@@ -101,7 +101,14 @@ def load_brand_validation(category_name: str) -> Dict[str, str]:
         logger.info(f"Validation table not found for {category_name}, syncing from Sheets...")
 
     except Exception as e:
-        logger.warning(f"Failed to query validation for {category_name}: {e}")
+        logger.warning(
+            f"BRAND DETECTION: Failed to query validation data for '{category_name}' from BigQuery. "
+            f"Error: {e}. Brand detection from product codes will not work for this category.",
+            failure_reason="VALIDATION_QUERY_FAILED",
+            category=category_name,
+            table_id=table_id,
+            error_detail=str(e),
+        )
         _validation_cache[category_name] = {}
         return {}
 
@@ -179,7 +186,16 @@ def detect_brand_from_filename(filename: str, category_name: str) -> Optional[st
             logger.info(f"Detected brand '{brand}' from Shopee shop name '{shop_name}'")
             return brand
         else:
-            logger.warning(f"Shopee shop name '{shop_name}' not found in validation mapping ({len(shop_mapping)} entries)")
+            logger.warning(
+                f"BRAND DETECTION: Shopee shop name '{shop_name}' not found in validation mapping "
+                f"({len(shop_mapping)} entries loaded from BigQuery). "
+                f"This shop may not be registered in the Admin Sheet '{category_name} Validation' Column C. "
+                f"Add the shop name to Column C and brand code to Column B, then re-sync.",
+                failure_reason="SHOP_NAME_NOT_IN_MAPPING",
+                shop_name=shop_name,
+                category=category_name,
+                mapping_size=len(shop_mapping),
+            )
 
     return None
 
@@ -216,7 +232,13 @@ def detect_brand_from_data(
     # Load validation mapping
     validation_map = load_brand_validation(category_name)
     if not validation_map:
-        logger.warning(f"No validation mapping found for {category_name}")
+        logger.warning(
+            f"BRAND DETECTION: No validation mapping found for '{category_name}'. "
+            f"The Admin Sheet '{category_name} Validation' may be empty or not synced to BigQuery. "
+            f"Run /sync to refresh the validation data.",
+            failure_reason="NO_VALIDATION_DATA",
+            category=category_name,
+        )
         return None
 
     # Get first column name (product ID column)
@@ -254,9 +276,21 @@ def detect_brand_from_data(
     required_matches = len(values_to_check) * match_threshold
 
     if match_count < required_matches or match_count == 0:
+        # Show sample unmatched values for debugging
+        unmatched = [v for v in values_to_check[:10] if v not in validation_map]
         logger.warning(
-            f"Not enough matches for brand detection: {match_count}/{len(values_to_check)} "
-            f"(need {required_matches:.1f})"
+            f"BRAND DETECTION: Not enough product code matches for '{category_name}'. "
+            f"Matched {match_count}/{len(values_to_check)} codes (need {required_matches:.1f}, threshold={match_threshold}). "
+            f"Sample unmatched codes: {unmatched[:5]}. "
+            f"This means the file's product codes are not in the validation mapping. "
+            f"Either the file belongs to a brand not yet registered, or the validation data is outdated.",
+            failure_reason="LOW_MATCH_RATE",
+            category=category_name,
+            matched=match_count,
+            checked=len(values_to_check),
+            required=f"{required_matches:.1f}",
+            sample_unmatched=str(unmatched[:5]),
+            validation_size=len(validation_map),
         )
         return None
 

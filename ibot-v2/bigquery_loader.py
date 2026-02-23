@@ -352,9 +352,39 @@ class BigQueryLoader:
 
             return load_job.output_rows or len(rows), []
 
+        except BadRequest as e:
+            error_msg = str(e)
+            if "schema" in error_msg.lower() or "field" in error_msg.lower():
+                logger.error(
+                    f"BIGQUERY ERROR: Load job failed due to schema mismatch for table '{table_name}'. "
+                    f"Error: {error_msg}. "
+                    f"This means the data columns don't match the table's existing schema. "
+                    f"Fix: drop the table (bq rm -f -t {table_id}) and let v2 recreate it.",
+                    failure_reason="SCHEMA_MISMATCH",
+                    table=table_name,
+                    rows_attempted=len(rows),
+                )
+            else:
+                logger.error(
+                    f"BIGQUERY ERROR: Load job failed with BadRequest for table '{table_name}'. "
+                    f"Error: {error_msg}.",
+                    failure_reason="LOAD_JOB_BAD_REQUEST",
+                    table=table_name,
+                    rows_attempted=len(rows),
+                )
+            return 0, [error_msg]
+
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Load job failed: {error_msg}", table=table_name)
+            logger.error(
+                f"BIGQUERY ERROR: Load job failed unexpectedly for table '{table_name}'. "
+                f"Error: {error_msg}. "
+                f"This could be a permissions issue, network timeout, or BigQuery service error.",
+                failure_reason="LOAD_JOB_FAILED",
+                table=table_name,
+                rows_attempted=len(rows),
+                error_detail=error_msg,
+            )
             return 0, [error_msg]
 
     def delete_brand_data(
@@ -574,7 +604,21 @@ class BigQueryLoader:
             }
 
         except Exception as e:
-            logger.error(f"BigQuery upload failed: {e}", exc_info=True)
+            error_msg = str(e)
+            logger.error(
+                f"BIGQUERY ERROR: Upload pipeline failed for table '{category.bigquery_table}'. "
+                f"Error: {error_msg}. "
+                f"This is a top-level failure wrapping dataset/table creation or insert. "
+                f"Check the more specific error logs above for root cause.",
+                failure_reason="UPLOAD_PIPELINE_FAILED",
+                table=category.bigquery_table,
+                brand=brand_code,
+                import_id=import_id,
+                rows=len(parsed_file.rows),
+                columns=len(parsed_file.headers),
+                error_detail=error_msg,
+                exc_info=True,
+            )
             return False, {
                 "import_id": import_id,
                 "error": str(e),
@@ -654,7 +698,18 @@ class BigQueryLoader:
             }
 
         except Exception as e:
-            logger.error(f"Batch upload failed: {e}", exc_info=True)
+            error_msg = str(e)
+            logger.error(
+                f"BIGQUERY ERROR: Batch upload pipeline failed for table '{category.bigquery_table}'. "
+                f"Error: {error_msg}. "
+                f"Tried to insert {len(rows)} rows with {len(headers)} columns.",
+                failure_reason="BATCH_UPLOAD_PIPELINE_FAILED",
+                table=category.bigquery_table,
+                rows=len(rows),
+                columns=len(headers),
+                error_detail=error_msg,
+                exc_info=True,
+            )
             return False, {"error": str(e)}
 
 

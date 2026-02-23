@@ -142,7 +142,15 @@ async def process_file(bucket_name: str, blob_path: str) -> dict:
     # Get category config
     category = get_category(category_name)
     if not category:
-        logger.error(f"Unknown category: {category_name}", path=blob_path)
+        logger.error(
+            f"FILE FAILED: Unknown category '{category_name}'. "
+            f"The folder name does not match any configured category in config.py. "
+            f"Check that the folder name in GCS matches exactly (case-sensitive).",
+            failure_reason="UNKNOWN_CATEGORY",
+            filename=filename,
+            category_attempted=category_name,
+            path=blob_path,
+        )
         move_to_failed(bucket_name, blob_path)
         return {"success": False, "error": f"Unknown category: {category_name}"}
 
@@ -156,7 +164,16 @@ async def process_file(bucket_name: str, blob_path: str) -> dict:
     # Download file content
     file_content = download_blob_as_bytes(bucket_name, blob_path)
     if not file_content:
-        logger.error(f"Failed to download file: {blob_path}")
+        logger.error(
+            f"FILE FAILED: Could not download file from GCS. "
+            f"The file may have been deleted, moved, or there may be a permissions issue. "
+            f"Check that the file exists at gs://{bucket_name}/{blob_path}.",
+            failure_reason="DOWNLOAD_FAILED",
+            filename=filename,
+            category=category_name,
+            bucket=bucket_name,
+            path=blob_path,
+        )
         move_to_failed(bucket_name, blob_path)
         return {"success": False, "error": "Failed to download file"}
 
@@ -165,12 +182,22 @@ async def process_file(bucket_name: str, blob_path: str) -> dict:
 
     if not parsed_file.is_valid:
         error_msg = parsed_file.errors[0] if parsed_file.errors else "No data found"
-        logger.error(f"Failed to parse file: {error_msg}", path=blob_path)
+        all_errors = "; ".join(parsed_file.errors) if parsed_file.errors else "No data rows found after parsing"
+        logger.error(
+            f"FILE FAILED: Could not parse file content. {all_errors}. "
+            f"This typically means: (1) the file is corrupted or not a valid Excel/CSV, "
+            f"(2) the file is empty or has no data rows, "
+            f"(3) the file format doesn't match the extension (e.g., JSON saved as .xls), or "
+            f"(4) openpyxl/xlrd cannot read this specific Excel variant.",
+            failure_reason="PARSE_FAILED",
+            filename=filename,
+            category=category_name,
+            brand=brand_code,
+            errors=all_errors,
+            total_rows=parsed_file.total_rows,
+            path=blob_path,
+        )
         move_to_failed(bucket_name, blob_path)
-
-        # Send failure notification (disabled for testing)
-        # notifier = get_notifier(get_slack_webhook(category_name))
-        # await notifier.notify_failure(filename, brand_code, category_name, error_msg)
 
         return {"success": False, "error": error_msg}
 
@@ -210,10 +237,23 @@ async def process_file(bucket_name: str, blob_path: str) -> dict:
 
         # If brand code is still invalid after all detection attempts, fail the file
         if not detected and not is_valid_brand_code(brand_code):
-            error_msg = f"Could not detect valid brand code. Filename gave '{brand_code}' which is invalid."
-            logger.error(error_msg, path=blob_path)
+            logger.error(
+                f"FILE FAILED: Could not detect a valid brand code. "
+                f"Filename extraction gave '{brand_code}' which is not all-uppercase. "
+                f"All fallback detection methods also failed: "
+                f"(1) filename pattern lookup (e.g., Shopee shop name) - no match, "
+                f"(2) product code matching against validation data - no match or below threshold, "
+                f"(3) 'akun' column extraction - column not found or empty. "
+                f"To fix: either rename the file with a valid brand code prefix (e.g., 'GS filename.xlsx'), "
+                f"or add the product codes/shop name to the validation sheet in Admin Sheet.",
+                failure_reason="BRAND_DETECTION_FAILED",
+                filename=filename,
+                category=category_name,
+                brand_attempted=brand_code,
+                path=blob_path,
+            )
             move_to_failed(bucket_name, blob_path)
-            return {"success": False, "error": error_msg}
+            return {"success": False, "error": f"Could not detect valid brand code. Filename gave '{brand_code}' which is invalid."}
 
     # Generate import ID
     import_id = f"ibotv2_{category.bigquery_table}_{brand_code}_{uuid.uuid4().hex[:8]}"
@@ -225,11 +265,26 @@ async def process_file(bucket_name: str, blob_path: str) -> dict:
 
         if not success:
             error_msg = result.get("error", "BigQuery upload failed")
-            logger.error(f"BigQuery upload failed: {error_msg}", path=blob_path)
+            bq_errors = result.get("errors", [])
+            logger.error(
+                f"FILE FAILED: BigQuery upload failed after parsing succeeded. "
+                f"Error: {error_msg}. "
+                f"This typically means: (1) schema mismatch - the table has columns that don't match the data, "
+                f"(2) permissions issue - the service account cannot write to BigQuery, "
+                f"(3) table creation race condition - another function created the table simultaneously, or "
+                f"(4) load job timeout - too much data for a single load job.",
+                failure_reason="BIGQUERY_UPLOAD_FAILED",
+                filename=filename,
+                category=category_name,
+                brand=brand_code,
+                import_id=import_id,
+                table=category.bigquery_table,
+                rows_attempted=len(parsed_file.rows),
+                columns=len(parsed_file.headers),
+                bq_errors=str(bq_errors[:3]) if bq_errors else "none",
+                path=blob_path,
+            )
             move_to_failed(bucket_name, blob_path)
-
-            # notifier = get_notifier(get_slack_webhook(category_name))
-            # await notifier.notify_failure(filename, brand_code, category_name, error_msg)
 
             return {"success": False, "error": error_msg, "import_id": import_id}
 
@@ -302,7 +357,12 @@ async def batch_process_category(category_name: str) -> dict:
     # 1. Get category config
     category = get_category(category_name)
     if not category:
-        logger.error(f"Unknown category: {category_name}")
+        logger.error(
+            f"BATCH FAILED: Unknown category '{category_name}'. "
+            f"Not found in config.py. Check the category name is exact (case-sensitive).",
+            failure_reason="UNKNOWN_CATEGORY",
+            category_attempted=category_name,
+        )
         return {"success": False, "error": f"Unknown category: {category_name}"}
 
     # 2. List all files in category folder
@@ -332,7 +392,14 @@ async def batch_process_category(category_name: str) -> dict:
         # Download file
         file_content = download_blob_as_bytes(bucket_name, blob_path)
         if not file_content:
-            logger.error(f"Failed to download: {blob_path}")
+            logger.error(
+                f"FILE FAILED (batch): Could not download file from GCS. "
+                f"The file may have been deleted/moved or there is a permissions issue.",
+                failure_reason="DOWNLOAD_FAILED",
+                filename=filename,
+                category=category_name,
+                path=blob_path,
+            )
             failed_files.append({"path": blob_path, "error": "Download failed"})
             move_to_failed(bucket_name, blob_path)
             continue
@@ -341,7 +408,18 @@ async def batch_process_category(category_name: str) -> dict:
         parsed = parse_file(filename, file_content, category)
         if not parsed.is_valid:
             error_msg = parsed.errors[0] if parsed.errors else "Parse failed"
-            logger.error(f"Failed to parse: {blob_path} - {error_msg}")
+            all_errors = "; ".join(parsed.errors) if parsed.errors else "No data rows"
+            logger.error(
+                f"FILE FAILED (batch): Could not parse file. {all_errors}. "
+                f"Possible causes: corrupted file, wrong format, empty file, "
+                f"or unsupported Excel variant (e.g., missing stylesheet, invalid XML).",
+                failure_reason="PARSE_FAILED",
+                filename=filename,
+                category=category_name,
+                errors=all_errors,
+                total_rows=parsed.total_rows,
+                path=blob_path,
+            )
             failed_files.append({"path": blob_path, "error": error_msg})
             move_to_failed(bucket_name, blob_path)
             continue
@@ -370,9 +448,20 @@ async def batch_process_category(category_name: str) -> dict:
                         brand_code = extracted_brand
 
             if not is_valid_brand_code(brand_code):
-                error_msg = f"Invalid brand code: {brand_code}"
-                logger.error(f"{error_msg} for {blob_path}")
-                failed_files.append({"path": blob_path, "error": error_msg})
+                logger.error(
+                    f"FILE FAILED (batch): Invalid brand code '{brand_code}' - not all uppercase. "
+                    f"All detection fallbacks failed: "
+                    f"(1) filename pattern lookup - no match, "
+                    f"(2) product code matching against validation - no match, "
+                    f"(3) 'akun' column extraction - not found. "
+                    f"Fix: rename file with valid brand prefix or update validation sheet.",
+                    failure_reason="BRAND_DETECTION_FAILED",
+                    filename=filename,
+                    category=category_name,
+                    brand_attempted=brand_code,
+                    path=blob_path,
+                )
+                failed_files.append({"path": blob_path, "error": f"Invalid brand code: {brand_code}"})
                 move_to_failed(bucket_name, blob_path)
                 continue
 
@@ -389,7 +478,16 @@ async def batch_process_category(category_name: str) -> dict:
         logger.info(f"Parsed {filename}: {len(parsed.rows)} rows, brand={brand_code}")
 
     if not all_rows:
-        logger.warning(f"No valid data found in any files for {category_name}")
+        logger.error(
+            f"BATCH FAILED: No valid data found in any of the {len(blob_paths)} files for {category_name}. "
+            f"All {len(failed_files)} files failed individually. "
+            f"Check the individual file failure logs above for specific reasons per file.",
+            failure_reason="ALL_FILES_FAILED",
+            category=category_name,
+            total_files=len(blob_paths),
+            failed_files=len(failed_files),
+            failed_details=str([f["error"] for f in failed_files[:5]]),
+        )
         return {
             "success": False,
             "error": "No valid data in any files",
@@ -408,7 +506,21 @@ async def batch_process_category(category_name: str) -> dict:
 
     if not success:
         error_msg = result.get("error", "Batch upload failed")
-        logger.error(f"Batch upload failed: {error_msg}")
+        bq_errors = result.get("errors", [])
+        logger.error(
+            f"BATCH FAILED: BigQuery batch upload failed for {category_name}. "
+            f"Error: {error_msg}. "
+            f"All {len(processed_files)} parsed files will be moved to failed/. "
+            f"This typically means a schema mismatch, permissions issue, or load job error. "
+            f"If schema mismatch: try dropping the table and re-processing.",
+            failure_reason="BIGQUERY_BATCH_UPLOAD_FAILED",
+            category=category_name,
+            table=category.bigquery_table,
+            files_count=len(processed_files),
+            total_rows=len(all_rows),
+            columns=len(all_headers) if all_headers else 0,
+            bq_errors=str(bq_errors[:3]) if bq_errors else "none",
+        )
         # Move all processed files to failed
         for blob_path in processed_files:
             move_to_failed(bucket_name, blob_path)
@@ -425,10 +537,25 @@ async def batch_process_category(category_name: str) -> dict:
     duration = time.time() - start_time
     rows_inserted = result.get("rows_inserted", 0)
 
+    # Log summary with failure details if any files failed
+    if failed_files:
+        failed_summary = "; ".join(
+            f"{f['path'].split('/')[-1]}: {f['error']}" for f in failed_files[:10]
+        )
+        logger.warning(
+            f"BATCH PARTIAL: {len(processed_files)} files succeeded, {len(failed_files)} files failed in {category_name}. "
+            f"Failed files and reasons: {failed_summary}",
+            category=category_name,
+            files_succeeded=len(processed_files),
+            files_failed=len(failed_files),
+            rows_inserted=rows_inserted,
+        )
+
     logger.info(
         f"Batch processing complete",
         category=category_name,
         files=len(processed_files),
+        failed=len(failed_files),
         rows=rows_inserted,
         duration=f"{duration:.1f}s",
     )
@@ -438,6 +565,7 @@ async def batch_process_category(category_name: str) -> dict:
         "category": category_name,
         "files_processed": len(processed_files),
         "files_failed": len(failed_files),
+        "failed_details": [{"file": f["path"].split("/")[-1], "error": f["error"]} for f in failed_files],
         "rows_inserted": rows_inserted,
         "duration_seconds": round(duration, 1),
     }
