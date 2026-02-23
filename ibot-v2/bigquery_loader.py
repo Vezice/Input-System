@@ -326,9 +326,11 @@ class BigQueryLoader:
         json_file = io.BytesIO(json_bytes)
 
         # Configure load job
+        # Don't pass schema - let BigQuery use the existing table's schema.
+        # This avoids "Field X is missing in new schema" errors when tables
+        # have extra columns (e.g., _import_id from older code).
         job_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-            schema=schema,
             write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
         )
 

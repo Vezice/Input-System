@@ -122,6 +122,68 @@ def load_brand_validation(category_name: str) -> Dict[str, str]:
         return {}
 
 
+def _load_shop_name_mapping(category_name: str) -> Dict[str, str]:
+    """
+    Load shop name -> brand code mapping from Column C -> Column B in validation table.
+
+    Used for BA Dash SHO where Column C contains Shopee shop names
+    and Column B contains the corresponding brand codes.
+    """
+    cache_key = f"{category_name}_shop_names"
+    if cache_key in _validation_cache:
+        return _validation_cache[cache_key]
+
+    client = _get_bq_client()
+    table_name = _get_validation_table_name(category_name)
+    table_id = f"{PROJECT_ID}.{CONFIG_DATASET}.{table_name}"
+
+    try:
+        query = f"""
+        SELECT B as brand_code, C as shop_name
+        FROM `{table_id}`
+        WHERE C IS NOT NULL AND TRIM(C) != ''
+          AND B IS NOT NULL AND TRIM(B) != ''
+        """
+        rows = client.query(query).result()
+
+        mapping = {}
+        for row in rows:
+            brand_code = str(row.brand_code).strip() if row.brand_code else ""
+            shop_name = str(row.shop_name).strip() if row.shop_name else ""
+            if shop_name and brand_code:
+                mapping[shop_name] = brand_code
+
+        logger.info(f"Loaded {len(mapping)} shop name mappings for {category_name}")
+        _validation_cache[cache_key] = mapping
+        return mapping
+
+    except Exception as e:
+        logger.warning(f"Failed to load shop name mapping for {category_name}: {e}")
+        _validation_cache[cache_key] = {}
+        return {}
+
+
+def detect_brand_from_filename(filename: str, category_name: str) -> Optional[str]:
+    """
+    Detect brand by matching filename patterns against validation data.
+
+    For BA Dash SHO: extracts shop name from '{shopname}.shopee-shop-stats.{date}.xlsx'
+    and looks it up in the validation mapping (Column C -> Column B).
+    """
+    # Shopee format: {shopname}.shopee-shop-stats.{date}.xlsx
+    if ".shopee-shop-stats." in filename:
+        shop_name = filename.split(".shopee-shop-stats.")[0].strip()
+        shop_mapping = _load_shop_name_mapping(category_name)
+        if shop_name in shop_mapping:
+            brand = shop_mapping[shop_name]
+            logger.info(f"Detected brand '{brand}' from Shopee shop name '{shop_name}'")
+            return brand
+        else:
+            logger.warning(f"Shopee shop name '{shop_name}' not found in validation mapping ({len(shop_mapping)} entries)")
+
+    return None
+
+
 def detect_brand_from_data(
     parsed_file,
     category_name: str,

@@ -27,7 +27,7 @@ from config import get_category, get_slack_webhook, settings
 from parser import parse_file
 from bigquery_loader import get_loader
 from slack_notifier import get_notifier
-from brand_detector import detect_brand_from_data, is_legacy_detection_enabled
+from brand_detector import detect_brand_from_data, detect_brand_from_filename, is_legacy_detection_enabled
 from utils.gcs_utils import download_blob_as_bytes, list_blobs_in_folder, move_to_archive, move_to_failed, upload_blob
 from utils.logger import get_logger
 
@@ -185,7 +185,15 @@ async def process_file(bucket_name: str, blob_path: str) -> dict:
 
     if not is_valid_brand_code(brand_code):
         detected = False
-        if is_legacy_detection_enabled():
+
+        # Try filename-based detection first (e.g., Shopee shop name lookup)
+        filename_brand = detect_brand_from_filename(filename, category_name)
+        if filename_brand:
+            logger.info(f"Using filename-detected brand '{filename_brand}' instead of '{brand_code}'")
+            brand_code = filename_brand
+            detected = True
+
+        if not detected and is_legacy_detection_enabled():
             # Use v1-style brand detection from product codes
             detected_brand = detect_brand_from_data(parsed_file, category_name)
             if detected_brand:
@@ -348,8 +356,11 @@ async def batch_process_category(category_name: str) -> dict:
             return code == code.upper()
 
         if not is_valid_brand_code(brand_code):
-            # Try to detect from content
-            if is_legacy_detection_enabled():
+            # Try filename-based detection first (e.g., Shopee shop name lookup)
+            filename_brand = detect_brand_from_filename(filename, category_name)
+            if filename_brand:
+                brand_code = filename_brand
+            elif is_legacy_detection_enabled():
                 detected_brand = detect_brand_from_data(parsed, category_name)
                 if detected_brand:
                     brand_code = detected_brand

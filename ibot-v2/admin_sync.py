@@ -211,17 +211,19 @@ def sync_validation(category_name: str) -> Tuple[bool, int]:
     logger.info(f"Syncing validation: {sheet_name}")
 
     # Fetch validation data (including header) - up to 50k rows
-    rows = _fetch_sheet_data(sheet_name, "A1:B50000")
+    # Fetch A:C to include shop names (Column C) used for BA Dash SHO Shopee lookups
+    rows = _fetch_sheet_data(sheet_name, "A1:C50000")
     if not rows:
         logger.warning(f"No validation data found for {category_name}")
         return False, 0
 
     _ensure_dataset_exists()
 
-    # Schema: A (brand), B (product_id) - all STRING
+    # Schema: A (marketplace/brand), B (product_id/brand_code), C (shop_name) - all STRING
     schema = [
         bigquery.SchemaField("A", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("B", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("C", "STRING", mode="NULLABLE"),
     ]
 
     # Table name: sanitize category name
@@ -235,6 +237,7 @@ def sync_validation(category_name: str) -> Tuple[bool, int]:
         prepared_row = {
             "A": str(row[0]).strip() if len(row) > 0 and row[0] else "",
             "B": str(row[1]).strip() if len(row) > 1 and row[1] else "",
+            "C": str(row[2]).strip() if len(row) > 2 and row[2] else "",
         }
         prepared_rows.append(prepared_row)
 

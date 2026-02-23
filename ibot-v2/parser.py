@@ -208,6 +208,37 @@ def read_csv_file(
     return headers, data_rows
 
 
+def _fix_xlsx_pane_xml(file_content: bytes) -> bytes:
+    """Fix snake_case activePane values in XLSX XML that openpyxl rejects.
+
+    Shopee XLSX exports use activePane="bottom_left" (snake_case) instead of
+    "bottomLeft" (camelCase per OOXML spec), causing openpyxl to fail.
+    """
+    import zipfile
+
+    replacements = {
+        b'"bottom_left"': b'"bottomLeft"',
+        b'"bottom_right"': b'"bottomRight"',
+        b'"top_left"': b'"topLeft"',
+        b'"top_right"': b'"topRight"',
+    }
+
+    input_zip = zipfile.ZipFile(io.BytesIO(file_content))
+    output_buffer = io.BytesIO()
+    output_zip = zipfile.ZipFile(output_buffer, 'w', zipfile.ZIP_DEFLATED)
+
+    for item in input_zip.namelist():
+        data = input_zip.read(item)
+        if item.startswith("xl/worksheets/") and item.endswith(".xml"):
+            for old, new in replacements.items():
+                data = data.replace(old, new)
+        output_zip.writestr(item, data)
+
+    output_zip.close()
+    input_zip.close()
+    return output_buffer.getvalue()
+
+
 def read_xlsx_file(
     file_content: bytes,
     sheet_name: Optional[str] = None,
@@ -220,8 +251,16 @@ def read_xlsx_file(
     if not EXCEL_SUPPORT:
         raise ImportError("openpyxl is required for Excel support")
 
-    # Note: read_only=True can cause issues with some files, especially small ones
-    workbook = openpyxl.load_workbook(io.BytesIO(file_content), data_only=True)
+    # Try loading the workbook, with fallback to fix malformed XML from Shopee exports
+    try:
+        workbook = openpyxl.load_workbook(io.BytesIO(file_content), data_only=True)
+    except Exception as e:
+        if "read worksheets" in str(e) or "invalid xml" in str(e).lower():
+            logger.warning(f"Fixing XLSX pane XML and retrying: {e}")
+            fixed_content = _fix_xlsx_pane_xml(file_content)
+            workbook = openpyxl.load_workbook(io.BytesIO(fixed_content), data_only=True)
+        else:
+            raise
 
     if sheet_name:
         if sheet_name not in workbook.sheetnames:
