@@ -61,8 +61,11 @@ def extract_info_from_path(blob_path: str) -> tuple[Optional[str], Optional[str]
     # Extract brand code from filename
     words = filename.split(" ")
 
-    if category_name.startswith("BA Dash") and len(words) >= 2:
-        # BA Dash files: "{MARKETPLACE} {BRAND} Overview_..."
+    # Marketplace codes that appear as filename prefix in BA Dash TIK/TOK
+    marketplace_prefixes = {"TIK", "TOK", "SHO", "LAZ"}
+
+    if category_name.startswith("BA Dash") and len(words) >= 2 and words[0].upper() in marketplace_prefixes:
+        # BA Dash TIK/TOK: "{MARKETPLACE} {BRAND} Overview_..."
         # Brand is the second word (e.g., "TIK GS Overview..." -> "GS")
         brand_code = words[1]
     elif len(words) >= 1:
