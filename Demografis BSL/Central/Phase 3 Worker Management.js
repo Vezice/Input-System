@@ -22,12 +22,30 @@ function AHA_UploadFilesToGCS3(category, uploadHereFolder) {
     return { uploaded: 0, failed: 0, skipped: true };
   }
 
+  // Time guard: stop uploading after 45 seconds to leave time for
+  // file splitting and worker triggering (6-min Apps Script limit)
+  const GCS_UPLOAD_TIME_LIMIT_MS = 45 * 1000;
+  const startTime = new Date().getTime();
+
   const files = uploadHereFolder.getFiles();
   let uploaded = 0;
   let failed = 0;
+  let skippedTimeout = 0;
   const errors = [];
 
   while (files.hasNext()) {
+    // Check time before processing each file
+    const elapsed = new Date().getTime() - startTime;
+    if (elapsed > GCS_UPLOAD_TIME_LIMIT_MS) {
+      // Count remaining files
+      while (files.hasNext()) {
+        files.next();
+        skippedTimeout++;
+      }
+      Logger.log(`⚠️ GCS upload time limit reached (${Math.round(elapsed / 1000)}s). Skipped ${skippedTimeout} remaining files.`);
+      break;
+    }
+
     const file = files.next();
     const filename = file.getName();
 
@@ -71,12 +89,13 @@ function AHA_UploadFilesToGCS3(category, uploadHereFolder) {
     }
   }
 
-  Logger.log(`GCS upload complete: ${uploaded} uploaded, ${failed} failed`);
+  const totalElapsed = Math.round((new Date().getTime() - startTime) / 1000);
+  Logger.log(`GCS upload complete in ${totalElapsed}s: ${uploaded} uploaded, ${failed} failed, ${skippedTimeout} skipped (timeout)`);
 
   // Don't send Slack notification for GCS failures - just log them
   // v1 should continue processing regardless of GCS upload status
 
-  return { uploaded, failed, errors };
+  return { uploaded, failed, skippedTimeout, errors };
 }
 
 /**

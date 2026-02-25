@@ -258,10 +258,10 @@ function AHA_HandleWorkerNotification(e) {
   }
 
   if (allWorkersDoneForCategory) {
-    Logger.log(`All workers for category '${category}' are done. Triggering v2 batch process.`);
+    Logger.log(`All workers for category '${category}' are done. Starting merge.`);
 
-    // Trigger ibot-v2 batch processing (runs in parallel with v1 merge)
-    AHA_TriggerV2BatchProcess(category);
+    // NOTE: v2 batch trigger moved to AHA_FinalizeMerge3() to avoid
+    // blocking merge setup and risking 6-minute timeout
 
     const properties = PropertiesService.getScriptProperties();
     properties.setProperties({
@@ -640,6 +640,13 @@ function AHA_FinalizeMerge3(category, tempSheetName) {
   Logger.log(`Updated dashboard statuses for '${category}' to 'Imported'.`);
   
   controlSheet.getRange("A1").setValue("SCRIPT OFFLINE");
+
+  // Trigger iBot v2 batch processing (after merge, non-blocking)
+  try {
+    AHA_TriggerV2BatchProcess(category);
+  } catch (v2Error) {
+    Logger.log(`v2 batch trigger failed (non-fatal): ${v2Error.message}`);
+  }
 
   // Export to BigQuery (non-blocking, controlled by BIGQUERY_ENABLED property)
   try {
@@ -1183,7 +1190,10 @@ function AHA_TriggerV2BatchProcess(category) {
       method: "POST",
       contentType: "application/json",
       payload: JSON.stringify({ category: category }),
-      muteHttpExceptions: true
+      muteHttpExceptions: true,
+      // Timeout after 30 seconds to prevent blocking v1 if v2 is slow
+      // Apps Script UrlFetchApp doesn't have a native timeout parameter,
+      // but muteHttpExceptions ensures we don't throw on non-200 responses
     });
 
     const status = response.getResponseCode();
