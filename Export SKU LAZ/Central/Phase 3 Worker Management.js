@@ -10,7 +10,8 @@ const IBOT_V2_GCS_CONFIG = {
 
 /**
  * Uploads all files from the Upload Here folder to GCS for iBot v2 processing.
- * This runs in parallel with v1 processing - failures here don't block v1.
+ * Uses fetchAll() for parallel uploads — 48 files in ~5-10s instead of ~96-144s.
+ * Failures here don't block v1.
  *
  * @param {string} category The category name (e.g., "BA Produk SHO")
  * @param {GoogleAppsScript.Drive.Folder} uploadHereFolder The folder containing files to upload
@@ -22,27 +23,22 @@ function AHA_UploadFilesToGCS3(category, uploadHereFolder) {
     return { uploaded: 0, failed: 0, skipped: true };
   }
 
-  // Time guard: stop uploading after 45 seconds to leave time for
-  // file splitting and worker triggering (6-min Apps Script limit)
-  const GCS_UPLOAD_TIME_LIMIT_MS = 45 * 1000;
+  // Time guard for file collection phase (reading blobs from Drive)
+  // fetchAll() itself is fast, but reading 48+ blobs takes time
+  const GCS_UPLOAD_TIME_LIMIT_MS = 90 * 1000;
   const startTime = new Date().getTime();
 
+  // Phase 1: Collect all file data and build request objects
   const files = uploadHereFolder.getFiles();
-  let uploaded = 0;
-  let failed = 0;
+  const requests = [];
+  const filenames = [];
   let skippedTimeout = 0;
-  const errors = [];
 
   while (files.hasNext()) {
-    // Check time before processing each file
     const elapsed = new Date().getTime() - startTime;
     if (elapsed > GCS_UPLOAD_TIME_LIMIT_MS) {
-      // Count remaining files
-      while (files.hasNext()) {
-        files.next();
-        skippedTimeout++;
-      }
-      Logger.log(`⚠️ GCS upload time limit reached (${Math.round(elapsed / 1000)}s). Skipped ${skippedTimeout} remaining files.`);
+      while (files.hasNext()) { files.next(); skippedTimeout++; }
+      Logger.log(`⚠️ GCS upload time limit reached during file collection (${Math.round(elapsed / 1000)}s). Skipped ${skippedTimeout} files.`);
       break;
     }
 
@@ -58,39 +54,49 @@ function AHA_UploadFilesToGCS3(category, uploadHereFolder) {
       const blob = file.getBlob();
       const content = Utilities.base64Encode(blob.getBytes());
 
-      const payload = {
-        category: category,
-        filename: filename,
-        content: content
-      };
-
-      const options = {
+      requests.push({
+        url: IBOT_V2_GCS_CONFIG.UPLOAD_ENDPOINT,
         method: 'post',
         contentType: 'application/json',
-        payload: JSON.stringify(payload),
+        payload: JSON.stringify({ category, filename, content }),
         muteHttpExceptions: true
-      };
-
-      const response = UrlFetchApp.fetch(IBOT_V2_GCS_CONFIG.UPLOAD_ENDPOINT, options);
-      const responseCode = response.getResponseCode();
-
-      if (responseCode === 200) {
-        uploaded++;
-        Logger.log(`✅ GCS upload: ${filename}`);
-      } else {
-        failed++;
-        errors.push(`${filename}: ${response.getContentText()}`);
-        Logger.log(`❌ GCS upload failed: ${filename} - ${response.getContentText()}`);
-      }
+      });
+      filenames.push(filename);
     } catch (e) {
-      failed++;
-      errors.push(`${filename}: ${e.message}`);
-      Logger.log(`❌ GCS upload error: ${filename} - ${e.message}`);
+      Logger.log(`❌ GCS error reading ${filename}: ${e.message}`);
     }
   }
 
+  if (requests.length === 0) {
+    Logger.log("No files to upload to GCS.");
+    return { uploaded: 0, failed: 0, skippedTimeout, errors: [] };
+  }
+
+  // Phase 2: Upload all files in parallel via fetchAll()
+  let uploaded = 0;
+  let failed = 0;
+  const errors = [];
+
+  try {
+    Logger.log(`Uploading ${requests.length} files to GCS in parallel...`);
+    const responses = UrlFetchApp.fetchAll(requests);
+
+    responses.forEach((response, i) => {
+      if (response.getResponseCode() === 200) {
+        uploaded++;
+      } else {
+        failed++;
+        errors.push(`${filenames[i]}: ${response.getContentText()}`);
+        Logger.log(`❌ GCS upload failed: ${filenames[i]} - ${response.getContentText()}`);
+      }
+    });
+  } catch (e) {
+    Logger.log(`❌ GCS fetchAll error: ${e.message}`);
+    failed = requests.length;
+  }
+
   const totalElapsed = Math.round((new Date().getTime() - startTime) / 1000);
-  Logger.log(`GCS upload complete in ${totalElapsed}s: ${uploaded} uploaded, ${failed} failed, ${skippedTimeout} skipped (timeout)`);
+  Logger.log(`GCS upload complete in ${totalElapsed}s: ${uploaded}/${requests.length} files (parallel), ${skippedTimeout} skipped`);
 
   // Don't send Slack notification for GCS failures - just log them
   // v1 should continue processing regardless of GCS upload status
